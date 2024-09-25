@@ -157,19 +157,25 @@ class KeypointLoss(nn.Module):
 class v8DetectionLoss:
     """Criterion class for computing training losses."""
 
-    def __init__(self, model, tal_topk=10):  # model must be de-paralleled
+    def __init__(self, model, tal_topk=10, class_weights=None):  # model must be de-paralleled
         """Initializes v8DetectionLoss with the model, defining model-related properties and BCE loss function."""
         device = next(model.parameters()).device  # get model device
         h = model.args  # hyperparameters
 
         m = model.model[-1]  # Detect() module
-        self.bce = nn.BCEWithLogitsLoss(reduction="none")
+        
         self.hyp = h
         self.stride = m.stride  # model strides
         self.nc = m.nc  # number of classes
         self.no = m.nc + m.reg_max * 4
         self.reg_max = m.reg_max
         self.device = device
+        if class_weights:
+            assert self.nc == len(class_weights)
+            pos_weight = torch.tensor(class_weights).reshape(1, len(class_weights))
+        else:
+            pos_weight = torch.ones([1, self.nc])
+        self.bce = nn.BCEWithLogitsLoss(reduction="none", pos_weight=pos_weight)
 
         self.use_dfl = m.reg_max > 1
 
@@ -261,9 +267,9 @@ class v8DetectionLoss:
 class v8SegmentationLoss(v8DetectionLoss):
     """Criterion class for computing training losses."""
 
-    def __init__(self, model):  # model must be de-paralleled
+    def __init__(self, model, class_weights=None):  # model must be de-paralleled
         """Initializes the v8SegmentationLoss class, taking a de-paralleled model as argument."""
-        super().__init__(model)
+        super().__init__(model, class_weights=class_weights)
         self.overlap = model.args.overlap_mask
 
     def __call__(self, preds, batch):
