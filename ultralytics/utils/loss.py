@@ -172,9 +172,9 @@ class v8DetectionLoss:
         self.device = device
         if class_weights:
             assert self.nc == len(class_weights)
-            pos_weight = torch.tensor(class_weights).reshape(1, len(class_weights))
+            pos_weight = torch.tensor(class_weights, device=device).reshape(1, len(class_weights))
         else:
-            pos_weight = torch.ones([1, self.nc])
+            pos_weight = torch.ones([1, self.nc], device=device)
         self.bce = nn.BCEWithLogitsLoss(reduction="none", pos_weight=pos_weight)
 
         self.use_dfl = m.reg_max > 1
