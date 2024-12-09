@@ -905,7 +905,7 @@ class Exporter:
         except ImportError:
             check_requirements("tensorflow>=2.0.0")
             import tensorflow as tf  # noqa
-        check_requirements(
+        """check_requirements(
             (
                 "tf_keras",  # required by 'onnx2tf' package
                 "sng4onnx>=1.0.1",  # required by 'onnx2tf' package
@@ -918,7 +918,7 @@ class Exporter:
                 "protobuf>=5",
             ),
             cmds="--extra-index-url https://pypi.ngc.nvidia.com",  # onnx_graphsurgeon only on NVIDIA
-        )
+        )"""
 
         LOGGER.info(f"\n{prefix} starting export with tensorflow {tf.__version__}...")
         check_version(
@@ -956,16 +956,16 @@ class Exporter:
                 np.save(str(tmp_file), images.numpy().astype(np.float32))  # BHWC
                 np_data = [["images", tmp_file, [[[[0, 0, 0]]]], [[[[255, 255, 255]]]]]]
 
-        LOGGER.info(f"{prefix} starting TFLite export with onnx2tf {onnx2tf.__version__}...")
+        LOGGER.info(f"{prefix} starting TFLite export with onnx2tf - fork version {onnx2tf.__version__}...")
         keras_model = onnx2tf.convert(
             input_onnx_file_path=f_onnx,
             output_folder_path=str(f),
             not_use_onnxsim=True,
             verbosity="error",  # note INT8-FP16 activation bug https://github.com/ultralytics/ultralytics/issues/15873
-            output_integer_quantized_tflite=self.args.int8,
-            quant_type="per-tensor",  # "per-tensor" (faster) or "per-channel" (slower but more accurate)
-            custom_input_op_name_np_data_path=np_data,
-            disable_group_convolution=True,  # for end-to-end model compatibility
+            #output_integer_quantized_tflite=self.args.int8,
+            #quant_type="per-tensor",  # "per-tensor" (faster) or "per-channel" (slower but more accurate)
+            #custom_input_op_name_np_data_path=np_data,
+            disable_group_convolution=False,  # for end-to-end model compatibility
             enable_batchmatmul_unfold=True,  # for end-to-end model compatibility
         )
         yaml_save(f / "metadata.yaml", self.metadata)  # add metadata.yaml
