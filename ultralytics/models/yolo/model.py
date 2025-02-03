@@ -15,7 +15,7 @@ class YOLO(Model):
         """Initialize YOLO model, switching to YOLOWorld if model filename contains '-world'."""
         print("""
         ########################
-        ## USING DEV VERSION 3##
+        ## USING DEV VERSION 4##
         ########################
         """)
         path = Path(model)

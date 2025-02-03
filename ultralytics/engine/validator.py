@@ -236,7 +236,9 @@ class BaseValidator:
         correct = np.zeros((pred_classes.shape[0], self.iouv.shape[0])).astype(bool)
         # LxD matrix where L - labels (rows), D - detections (columns)
         correct_class = true_classes[:, None] == pred_classes
-        iou = iou * correct_class  # zero out the wrong classes
+        # Adding a bypass for the unclear class (class 10): matches with any prediction
+        bypass = true_classes[:, None] == 10 * torch.ones(pred_classes.shape[0], device=pred_classes.device)
+        iou = iou * (correct_class + bypass) # zero out the wrong classes
         iou = iou.cpu().numpy()
         for i, threshold in enumerate(self.iouv.cpu().tolist()):
             if use_scipy:
