@@ -1002,7 +1002,7 @@ class Exporter:
         except ImportError:
             check_requirements("tensorflow>=2.0.0")
             import tensorflow as tf  # noqa
-        """check_requirements(
+        check_requirements(
             (
                 "keras",  # required by 'onnx2tf' package
                 "tf_keras",  # required by 'onnx2tf' package
@@ -1018,7 +1018,7 @@ class Exporter:
                 "protobuf>=5",  # tflite_support pins <=4 but >=5 works
             ),
             cmds="--extra-index-url https://pypi.ngc.nvidia.com",  # onnx_graphsurgeon only on NVIDIA
-        )"""
+        )
 
         LOGGER.info(f"\n{prefix} starting export with tensorflow {tf.__version__}...")
         check_version(
