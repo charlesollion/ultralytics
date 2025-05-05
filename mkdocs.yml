@@ -342,7 +342,9 @@ nav:
       - Parking Management: guides/parking-management.md
       - Analytics: guides/analytics.md
       - Live Inference: guides/streamlit-live-inference.md
-      - Track Objects in Zone 🚀 NEW: guides/trackzone.md
+      - Track Objects in Zone: guides/trackzone.md
+      - Similarity Search 🚀 NEW: guides/similarity-search.md
+
   - Guides:
       - guides/index.md
       - YOLO Common Issues: guides/yolo-common-issues.md
@@ -588,6 +590,7 @@ nav:
       - solutions:
           - ai_gym: reference/solutions/ai_gym.md
           - analytics: reference/solutions/analytics.md
+          - config: reference/solutions/config.md
           - distance_calculation: reference/solutions/distance_calculation.md
           - heatmap: reference/solutions/heatmap.md
           - instance_segmentation: reference/solutions/instance_segmentation.md
@@ -598,6 +601,7 @@ nav:
           - queue_management: reference/solutions/queue_management.md
           - region_counter: reference/solutions/region_counter.md
           - security_alarm: reference/solutions/security_alarm.md
+          - similarity_search: reference/solutions/similarity_search.md
           - solutions: reference/solutions/solutions.md
           - speed_estimation: reference/solutions/speed_estimation.md
           - streamlit_inference: reference/solutions/streamlit_inference.md
@@ -615,6 +619,7 @@ nav:
       - utils:
           - __init__: reference/utils/__init__.md
           - autobatch: reference/utils/autobatch.md
+          - autodevice: reference/utils/autodevice.md
           - benchmarks: reference/utils/benchmarks.md
           - callbacks:
               - base: reference/utils/callbacks/base.md
