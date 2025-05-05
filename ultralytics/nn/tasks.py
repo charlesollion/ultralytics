@@ -470,7 +470,14 @@ class SegmentationModel(DetectionModel):
 
     def init_criterion(self):
         """Initialize the loss criterion for the SegmentationModel."""
-        return v8SegmentationLoss(self)
+        class_weights = self.yaml.get("class_weights")
+        if class_weights:
+            LOGGER.warning("class weights found") 
+            return v8SegmentationLoss(self, alpha=class_weights)
+        else:
+            LOGGER.warning("no class weights found") 
+            return v8SegmentationLoss(self)
+        
 
 
 class PoseModel(DetectionModel):
