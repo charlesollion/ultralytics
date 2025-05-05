@@ -473,9 +473,20 @@ class SegmentationModel(DetectionModel):
         class_weights = self.yaml.get("class_weights")
         if class_weights:
             LOGGER.warning("class weights found") 
+            print("""
+                    #########################
+                    ## USING CLASS WEIGHTS ##
+                    #########################
+                    """)
+
             return v8SegmentationLoss(self, alpha=class_weights)
         else:
             LOGGER.warning("no class weights found") 
+            print("""
+                    ########################
+                    ## USING FOCAL LOSS   ##
+                    ########################
+                    """)
             return v8SegmentationLoss(self)
         
 

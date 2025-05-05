@@ -39,6 +39,12 @@ class YOLO(Model):
             >>> model = YOLO("yolo11n.pt")  # load a pretrained YOLOv11n detection model
             >>> model = YOLO("yolo11n-seg.pt")  # load a pretrained YOLO11n segmentation model
         """
+        print("""
+        ########################
+        ## USING DEV VERSION 5##
+        ########################
+        """)
+
         path = Path(model)
         if "-world" in path.stem and path.suffix in {".pt", ".yaml", ".yml"}:  # if YOLOWorld PyTorch model
             new_instance = YOLOWorld(path, verbose=verbose)
