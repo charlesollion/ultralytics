@@ -926,7 +926,7 @@ class Exporter:
                 "sng4onnx>=1.0.1",  # required by 'onnx2tf' package
                 "onnx_graphsurgeon>=0.3.26",  # required by 'onnx2tf' package
                 "ai-edge-litert>=1.2.0",  # required by 'onnx2tf' package
-                "onnx>=1.12.0",
+                "onnx>=1.12.0,<1.18.0",
                 "onnx2tf>=1.26.3",
                 "onnxslim>=0.1.46",
                 "onnxruntime-gpu" if cuda else "onnxruntime",
@@ -943,8 +943,6 @@ class Exporter:
             verbose=True,
             msg="https://github.com/ultralytics/ultralytics/issues/5161",
         )
-        import onnx2tf
-
         f = Path(str(self.file).replace(self.file.suffix, "_saved_model"))
         if f.is_dir():
             shutil.rmtree(f)  # delete output folder
@@ -972,6 +970,7 @@ class Exporter:
                 np_data = [["images", tmp_file, [[[[0, 0, 0]]]], [[[[255, 255, 255]]]]]]
 
         LOGGER.info(f"{prefix} starting TFLite export with onnx2tf - fork version {onnx2tf.__version__}...")
+        import onnx2tf  # scoped for after ONNX export for reduced conflict during import
         keras_model = onnx2tf.convert(
             input_onnx_file_path=f_onnx,
             output_folder_path=str(f),
