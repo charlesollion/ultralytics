@@ -11,7 +11,6 @@ from typing import Optional
 
 import cv2
 import numpy as np
-import psutil
 from torch.utils.data import Dataset
 
 from ultralytics.data.utils import FORMATS_HELP_MSG, HELP_URL, IMG_FORMATS, check_file_speeds
@@ -171,7 +170,7 @@ class BaseDataset(Dataset):
                         # F += [p.parent / x.lstrip(os.sep) for x in t]  # local to global path (pathlib)
                 else:
                     raise FileNotFoundError(f"{self.prefix}{p} does not exist")
-            im_files = sorted(x.replace("/", os.sep) for x in f if x.split(".")[-1].lower() in IMG_FORMATS)
+            im_files = sorted(x.replace("/", os.sep) for x in f if x.rpartition(".")[-1].lower() in IMG_FORMATS)
             # self.img_files = sorted([x for x in f if x.suffix[1:].lower() in IMG_FORMATS])  # pathlib
             assert im_files, f"{self.prefix}No images found in {img_path}. {FORMATS_HELP_MSG}"
         except Exception as e:
@@ -336,7 +335,7 @@ class BaseDataset(Dataset):
             ratio = self.imgsz / max(im.shape[0], im.shape[1])  # max(h, w)  # ratio
             b += im.nbytes * ratio**2
         mem_required = b * self.ni / n * (1 + safety_margin)  # GB required to cache dataset into RAM
-        mem = psutil.virtual_memory()
+        mem = __import__("psutil").virtual_memory()
         if mem_required > mem.available:
             self.cache = None
             LOGGER.warning(

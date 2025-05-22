@@ -541,17 +541,14 @@ class Mosaic(BaseMixTransform):
         self.imgsz = imgsz
         self.border = (-imgsz // 2, -imgsz // 2)  # width, height
         self.n = n
+        self.buffer_enabled = self.dataset.cache != "ram"
 
-    def get_indexes(self, buffer=True):
+    def get_indexes(self):
         """
         Returns a list of random indexes from the dataset for mosaic augmentation.
 
         This method selects random image indexes either from a buffer or from the entire dataset, depending on
         the 'buffer' parameter. It is used to choose images for creating mosaic augmentations.
-
-        Args:
-            buffer (bool): If True, selects images from the dataset buffer. If False, selects from the entire
-                dataset.
 
         Returns:
             (List[int]): A list of random image indexes. The length of the list is n-1, where n is the number
@@ -562,7 +559,7 @@ class Mosaic(BaseMixTransform):
             >>> indexes = mosaic.get_indexes()
             >>> print(len(indexes))  # Output: 3
         """
-        if buffer:  # select images from buffer
+        if self.buffer_enabled:  # select images from buffer
             return random.choices(list(self.dataset.buffer), k=self.n - 1)
         else:  # select any images
             return [random.randint(0, len(self.dataset) - 1) for _ in range(self.n - 1)]
@@ -1026,7 +1023,9 @@ class CutMix(BaseMixTransform):
         labels2 = labels.pop("mix_labels")[0]
         area = cut_areas[np.random.choice(idx)]  # randomle select one
         ioa2 = bbox_ioa(area[None], labels2["instances"].bboxes).squeeze(0)
-        indexes2 = np.nonzero(ioa2 >= 0.01 if len(labels["instances"].segments) else 0.1)[0]
+        indexes2 = np.nonzero(ioa2 >= (0.01 if len(labels["instances"].segments) else 0.1))[0]
+        if len(indexes2) == 0:
+            return labels
 
         instances2 = labels2["instances"][indexes2]
         instances2.convert_bbox("xyxy")
@@ -1171,6 +1170,8 @@ class RandomPerspective:
                 img = cv2.warpPerspective(img, M, dsize=self.size, borderValue=(114, 114, 114))
             else:  # affine
                 img = cv2.warpAffine(img, M[:2], dsize=self.size, borderValue=(114, 114, 114))
+            if img.ndim == 2:
+                img = img[..., None]
         return img, M, s
 
     def apply_bboxes(self, bboxes, M):
@@ -1825,6 +1826,8 @@ class CopyPaste(BaseMixTransform):
             cv2.drawContours(im_new, instances2.segments[[j]].astype(np.int32), -1, (1, 1, 1), cv2.FILLED)
 
         result = labels2.get("img", cv2.flip(im, 1))  # augment segments
+        if result.ndim == 2:  # cv2.flip would eliminate the last dimension for grayscale images
+            result = result[..., None]
         i = im_new.astype(bool)
         im[i] = result[i]
 
