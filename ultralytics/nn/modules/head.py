@@ -34,7 +34,7 @@ class Detect(nn.Module):
     legacy = False  # backward compatibility for v3/v5/v8/v9 models
     xyxy = False  # xyxy or xywh output
 
-    def __init__(self, nc=80, ch=()):
+    def __init__(self, nc=80, c2 = None, c3 = None, arch="standard", ch=()):
         """Initialize the YOLO detection layer with specified number of classes and channels."""
         super().__init__()
         self.nc = nc  # number of classes
@@ -43,10 +43,18 @@ class Detect(nn.Module):
         self.no = nc + self.reg_max * 4  # number of outputs per anchor
         self.stride = torch.zeros(self.nl)  # strides computed during build
         # c2, c3 = max((16, ch[0] // 4, self.reg_max * 4)), max(ch[0], min(self.nc, 100))  # channels
-        c2, c3 = 128, 128
-        self.cv2 = nn.ModuleList(
-            nn.Sequential(LightConv(x, c2, 3), LightConv(c2, c2, 3), nn.Conv2d(c2, 4 * self.reg_max, 1)) for x in ch
-        )
+        if not c2:
+            c2 = max((16, ch[0] // 4, self.reg_max * 4))
+        if not c3:
+            c3 = max(ch[0], min(self.nc, 100))
+        if arch == "light":
+            self.cv2 = nn.ModuleList(
+                nn.Sequential(LightConv(x, c2, 3), LightConv(c2, c2, 3), nn.Conv2d(c2, 4 * self.reg_max, 1)) for x in ch
+            )
+        else:
+            self.cv2 = nn.ModuleList(
+                nn.Sequential(Conv(x, c2, 3), Conv(c2, c2, 3), nn.Conv2d(c2, 4 * self.reg_max, 1)) for x in ch
+            )
         self.cv3 = (
             nn.ModuleList(nn.Sequential(Conv(x, c3, 3), Conv(c3, c3, 3), nn.Conv2d(c3, self.nc, 1)) for x in ch)
             if self.legacy
@@ -189,9 +197,9 @@ class Detect(nn.Module):
 class Segment(Detect):
     """YOLO Segment head for segmentation models."""
 
-    def __init__(self, nc=80, nm=32, npr=256, ch=()):
+    def __init__(self, nc=80, nm=32, npr=256, c2=None, c3=None, arch="standard", ch=()):
         """Initialize the YOLO model attributes such as the number of masks, prototypes, and the convolution layers."""
-        super().__init__(nc, ch)
+        super().__init__(nc, c2, c3, arch, ch)
         self.nm = nm  # number of masks
         self.npr = npr  # number of protos
         self.proto = Proto(ch[0], self.npr, self.nm)  # protos

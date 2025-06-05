@@ -1499,6 +1499,10 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
         elif m in frozenset(
             {Detect, WorldDetect, YOLOEDetect, Segment, YOLOESegment, Pose, OBB, ImagePoolingAttn, v10Detect}
         ):
+            if m is Detect and len(args) < 4:
+                args.extend([None, None, "standard"])
+            if m is Segment and len(args) < 6:
+                args.extend([None, None, "standard"])
             args.append([ch[x] for x in f])
             if m is Segment or m is YOLOESegment:
                 args[2] = make_divisible(min(args[2], max_channels) * width, 8)
