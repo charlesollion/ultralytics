@@ -1547,7 +1547,7 @@ class ArgMaxModel(torch.nn.Module):
         pred = preds[0] if isinstance(preds, tuple) else preds
         scores = pred[:, 4:, :]
         scores, classes = scores.max(dim=1)
-        return (preds, scores, classes)
+        return (preds[:,:4,:], scores, classes)
         # second version using topk
         best_scores, best_idxs = scores.topk(self.args.topk)
         return (preds[: , :, best_idxs], classes[:, best_idxs])
