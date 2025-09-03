@@ -595,7 +595,7 @@ class Exporter:
         f = str(self.file.with_suffix(".onnx"))
         output_names = ["output0", "output1"] if isinstance(self.model, SegmentationModel) else ["output0"]
         if self.args.argmax:
-            output_names = ["output0", "output1", "output2"]
+            output_names = ["output0"]
         dynamic = self.args.dynamic
         if dynamic:
             dynamic = {"images": {0: "batch", 2: "height", 3: "width"}}  # shape(1,3,640,640)
@@ -1616,12 +1616,8 @@ class ArgMaxModel(torch.nn.Module):
         """
         preds = self.model(x) # shape (1, 4+nc, 8400)
         pred = preds[0] if isinstance(preds, tuple) else preds
-        scores = pred[:, 4:, :]
-        scores, classes = scores.max(dim=1)
-        return (preds[:,:4,:], scores, classes)
-        # second version using topk
-        best_scores, best_idxs = scores.topk(self.args.topk)
-        return (preds[: , :, best_idxs], classes[:, best_idxs])
+        return pred.permute(0, 2, 1).contiguous()
+
         
     
         
