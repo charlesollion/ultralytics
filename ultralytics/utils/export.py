@@ -1,8 +1,9 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
+from __future__ import annotations
+
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 
@@ -14,9 +15,9 @@ def export_onnx(
     im: torch.Tensor,
     onnx_file: str,
     opset: int = 14,
-    input_names: List[str] = ["images"],
-    output_names: List[str] = ["output0"],
-    dynamic: Union[bool, Dict] = False,
+    input_names: list[str] = ["images"],
+    output_names: list[str] = ["output0"],
+    dynamic: bool | dict = False,
 ) -> None:
     """
     Export a PyTorch model to ONNX format.
@@ -48,15 +49,15 @@ def export_onnx(
 
 def export_engine(
     onnx_file: str,
-    engine_file: Optional[str] = None,
-    workspace: Optional[int] = None,
+    engine_file: str | None = None,
+    workspace: int | None = None,
     half: bool = False,
     int8: bool = False,
     dynamic: bool = False,
-    shape: Tuple[int, int, int, int] = (1, 3, 640, 640),
-    dla: Optional[int] = None,
+    shape: tuple[int, int, int, int] = (1, 3, 640, 640),
+    dla: int | None = None,
     dataset=None,
-    metadata: Optional[Dict] = None,
+    metadata: dict | None = None,
     verbose: bool = False,
     prefix: str = "",
 ) -> None:
@@ -135,19 +136,18 @@ def export_engine(
         LOGGER.info(f'{prefix} output "{out.name}" with shape{out.shape} {out.dtype}')
 
     if dynamic:
-        if shape[0] <= 1:
-            LOGGER.warning(f"{prefix} 'dynamic=True' model requires max batch size, i.e. 'batch=16'")
         profile = builder.create_optimization_profile()
         min_shape = (1, shape[1], 32, 32)  # minimum input shape
         max_shape = (*shape[:2], *(int(max(2, workspace or 2) * d) for d in shape[2:]))  # max input shape
         for inp in inputs:
             profile.set_shape(inp.name, min=min_shape, opt=shape, max=max_shape)
         config.add_optimization_profile(profile)
+        if int8:
+            config.set_calibration_profile(profile)
 
     LOGGER.info(f"{prefix} building {'INT8' if int8 else 'FP' + ('16' if half else '32')} engine as {engine_file}")
     if int8:
         config.set_flag(trt.BuilderFlag.INT8)
-        config.set_calibration_profile(profile)
         config.profiling_verbosity = trt.ProfilingVerbosity.DETAILED
 
         class EngineCalibrator(trt.IInt8Calibrator):
@@ -181,7 +181,11 @@ def export_engine(
                 trt.IInt8Calibrator.__init__(self)
                 self.dataset = dataset
                 self.data_iter = iter(dataset)
-                self.algo = trt.CalibrationAlgoType.MINMAX_CALIBRATION
+                self.algo = (
+                    trt.CalibrationAlgoType.ENTROPY_CALIBRATION_2  # DLA quantization needs ENTROPY_CALIBRATION_2
+                    if dla is not None
+                    else trt.CalibrationAlgoType.MINMAX_CALIBRATION
+                )
                 self.batch = dataset.batch_size
                 self.cache = Path(cache)
 
@@ -193,7 +197,7 @@ def export_engine(
                 """Get the batch size to use for calibration."""
                 return self.batch or 1
 
-            def get_batch(self, names) -> Optional[List[int]]:
+            def get_batch(self, names) -> list[int] | None:
                 """Get the next batch to use for calibration, as a list of device memory pointers."""
                 try:
                     im0s = next(self.data_iter)["img"] / 255.0
@@ -203,7 +207,7 @@ def export_engine(
                     # Return None to signal to TensorRT there is no calibration data remaining
                     return None
 
-            def read_calibration_cache(self) -> Optional[bytes]:
+            def read_calibration_cache(self) -> bytes | None:
                 """Use existing cache instead of calibrating again, otherwise, implicitly return None."""
                 if self.cache.exists() and self.cache.suffix == ".cache":
                     return self.cache.read_bytes()

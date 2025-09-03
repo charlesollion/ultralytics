@@ -1,7 +1,9 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
+from __future__ import annotations
+
 from collections import defaultdict
-from typing import Any, Optional, Tuple
+from typing import Any
 
 from ultralytics.solutions.solutions import BaseSolution, SolutionAnnotator, SolutionResults
 from ultralytics.utils.plotting import colors
@@ -43,7 +45,7 @@ class ObjectCounter(BaseSolution):
         self.in_count = 0  # Counter for objects moving inward
         self.out_count = 0  # Counter for objects moving outward
         self.counted_ids = []  # List of IDs of objects that have been counted
-        self.classwise_counts = defaultdict(lambda: {"IN": 0, "OUT": 0})  # Dictionary for counts, categorized by class
+        self.classwise_count = defaultdict(lambda: {"IN": 0, "OUT": 0})  # Dictionary for counts, categorized by class
         self.region_initialized = False  # Flag indicating whether the region has been initialized
 
         self.show_in = self.CFG["show_in"]
@@ -52,9 +54,9 @@ class ObjectCounter(BaseSolution):
 
     def count_objects(
         self,
-        current_centroid: Tuple[float, float],
+        current_centroid: tuple[float, float],
         track_id: int,
-        prev_position: Optional[Tuple[float, float]],
+        prev_position: tuple[float, float] | None,
         cls: int,
     ) -> None:
         """
@@ -85,17 +87,17 @@ class ObjectCounter(BaseSolution):
                     # Vertical region: Compare x-coordinates to determine direction
                     if current_centroid[0] > prev_position[0]:  # Moving right
                         self.in_count += 1
-                        self.classwise_counts[self.names[cls]]["IN"] += 1
+                        self.classwise_count[self.names[cls]]["IN"] += 1
                     else:  # Moving left
                         self.out_count += 1
-                        self.classwise_counts[self.names[cls]]["OUT"] += 1
+                        self.classwise_count[self.names[cls]]["OUT"] += 1
                 # Horizontal region: Compare y-coordinates to determine direction
                 elif current_centroid[1] > prev_position[1]:  # Moving downward
                     self.in_count += 1
-                    self.classwise_counts[self.names[cls]]["IN"] += 1
+                    self.classwise_count[self.names[cls]]["IN"] += 1
                 else:  # Moving upward
                     self.out_count += 1
-                    self.classwise_counts[self.names[cls]]["OUT"] += 1
+                    self.classwise_count[self.names[cls]]["OUT"] += 1
                 self.counted_ids.append(track_id)
 
         elif len(self.region) > 2:  # Polygonal region
@@ -111,10 +113,10 @@ class ObjectCounter(BaseSolution):
                     and current_centroid[1] > prev_position[1]
                 ):  # Moving right or downward
                     self.in_count += 1
-                    self.classwise_counts[self.names[cls]]["IN"] += 1
+                    self.classwise_count[self.names[cls]]["IN"] += 1
                 else:  # Moving left or upward
                     self.out_count += 1
-                    self.classwise_counts[self.names[cls]]["OUT"] += 1
+                    self.classwise_count[self.names[cls]]["OUT"] += 1
                 self.counted_ids.append(track_id)
 
     def display_counts(self, plot_im) -> None:
@@ -122,7 +124,7 @@ class ObjectCounter(BaseSolution):
         Display object counts on the input image or frame.
 
         Args:
-            plot_im (numpy.ndarray): The image or frame to display counts on.
+            plot_im (np.ndarray): The image or frame to display counts on.
 
         Examples:
             >>> counter = ObjectCounter()
@@ -132,8 +134,8 @@ class ObjectCounter(BaseSolution):
         labels_dict = {
             str.capitalize(key): f"{'IN ' + str(value['IN']) if self.show_in else ''} "
             f"{'OUT ' + str(value['OUT']) if self.show_out else ''}".strip()
-            for key, value in self.classwise_counts.items()
-            if value["IN"] != 0 or value["OUT"] != 0
+            for key, value in self.classwise_count.items()
+            if value["IN"] != 0 or value["OUT"] != 0 and (self.show_in or self.show_out)
         }
         if labels_dict:
             self.annotator.display_analytics(plot_im, labels_dict, (104, 31, 17), (255, 255, 255), self.margin)
@@ -146,7 +148,7 @@ class ObjectCounter(BaseSolution):
         object counts, and displays the results on the input image.
 
         Args:
-            im0 (numpy.ndarray): The input image or frame to be processed.
+            im0 (np.ndarray): The input image or frame to be processed.
 
         Returns:
             (SolutionResults): Contains processed image `im0`, 'in_count' (int, count of objects entering the region),
@@ -190,6 +192,6 @@ class ObjectCounter(BaseSolution):
             plot_im=plot_im,
             in_count=self.in_count,
             out_count=self.out_count,
-            classwise_count=dict(self.classwise_counts),
+            classwise_count=dict(self.classwise_count),
             total_tracks=len(self.track_ids),
         )

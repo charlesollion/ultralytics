@@ -1,7 +1,11 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
+
+import torch
 
 from ultralytics.data.build import load_inference_source
 from ultralytics.engine.model import Model
@@ -47,7 +51,7 @@ class YOLO(Model):
         >>> model = YOLO("yolo11n.yaml")
     """
 
-    def __init__(self, model: Union[str, Path] = "yolo11n.pt", task: Optional[str] = None, verbose: bool = False):
+    def __init__(self, model: str | Path = "yolo11n.pt", task: str | None = None, verbose: bool = False):
         """
         Initialize a YOLO model.
 
@@ -85,7 +89,7 @@ class YOLO(Model):
                 self.__dict__ = new_instance.__dict__
 
     @property
-    def task_map(self) -> Dict[str, Dict[str, Any]]:
+    def task_map(self) -> dict[str, dict[str, Any]]:
         """Map head to model, trainer, validator, and predictor classes."""
         return {
             "classify": {
@@ -147,7 +151,7 @@ class YOLOWorld(Model):
         >>> model.set_classes(["person", "car", "bicycle"])
     """
 
-    def __init__(self, model: Union[str, Path] = "yolov8s-world.pt", verbose: bool = False) -> None:
+    def __init__(self, model: str | Path = "yolov8s-world.pt", verbose: bool = False) -> None:
         """
         Initialize YOLOv8-World model with a pre-trained model file.
 
@@ -165,7 +169,7 @@ class YOLOWorld(Model):
             self.model.names = YAML.load(ROOT / "cfg/datasets/coco8.yaml").get("names")
 
     @property
-    def task_map(self) -> Dict[str, Dict[str, Any]]:
+    def task_map(self) -> dict[str, dict[str, Any]]:
         """Map head to model, validator, and predictor classes."""
         return {
             "detect": {
@@ -176,7 +180,7 @@ class YOLOWorld(Model):
             }
         }
 
-    def set_classes(self, classes: List[str]) -> None:
+    def set_classes(self, classes: list[str]) -> None:
         """
         Set the model's class names for detection.
 
@@ -230,9 +234,7 @@ class YOLOE(Model):
         >>> results = model.predict("image.jpg", visual_prompts=prompts)
     """
 
-    def __init__(
-        self, model: Union[str, Path] = "yoloe-11s-seg.pt", task: Optional[str] = None, verbose: bool = False
-    ) -> None:
+    def __init__(self, model: str | Path = "yoloe-11s-seg.pt", task: str | None = None, verbose: bool = False) -> None:
         """
         Initialize YOLOE model with a pre-trained model file.
 
@@ -243,12 +245,8 @@ class YOLOE(Model):
         """
         super().__init__(model=model, task=task, verbose=verbose)
 
-        # Assign default COCO class names when there are no custom names
-        if not hasattr(self.model, "names"):
-            self.model.names = YAML.load(ROOT / "cfg/datasets/coco8.yaml").get("names")
-
     @property
-    def task_map(self) -> Dict[str, Dict[str, Any]]:
+    def task_map(self) -> dict[str, dict[str, Any]]:
         """Map head to model, validator, and predictor classes."""
         return {
             "detect": {
@@ -287,13 +285,13 @@ class YOLOE(Model):
         Examples:
             >>> model = YOLOE("yoloe-11s-seg.pt")
             >>> img = torch.rand(1, 3, 640, 640)
-            >>> visual_features = model.model.backbone(img)
+            >>> visual_features = torch.rand(1, 1, 80, 80)
             >>> pe = model.get_visual_pe(img, visual_features)
         """
         assert isinstance(self.model, YOLOEModel)
         return self.model.get_visual_pe(img, visual)
 
-    def set_vocab(self, vocab: List[str], names: List[str]) -> None:
+    def set_vocab(self, vocab: list[str], names: list[str]) -> None:
         """
         Set vocabulary and class names for the YOLOE model.
 
@@ -319,7 +317,7 @@ class YOLOE(Model):
         assert isinstance(self.model, YOLOEModel)
         return self.model.get_vocab(names)
 
-    def set_classes(self, classes: List[str], embeddings) -> None:
+    def set_classes(self, classes: list[str], embeddings: torch.Tensor | None = None) -> None:
         """
         Set the model's class names and embeddings for detection.
 
@@ -328,6 +326,8 @@ class YOLOE(Model):
             embeddings (torch.Tensor): Embeddings corresponding to the classes.
         """
         assert isinstance(self.model, YOLOEModel)
+        if embeddings is None:
+            embeddings = self.get_text_pe(classes)  # generate text embeddings if not provided
         self.model.set_classes(classes, embeddings)
         # Verify no background class is present
         assert " " not in classes
@@ -341,7 +341,7 @@ class YOLOE(Model):
         self,
         validator=None,
         load_vp: bool = False,
-        refer_data: Optional[str] = None,
+        refer_data: str | None = None,
         **kwargs,
     ):
         """
@@ -368,9 +368,9 @@ class YOLOE(Model):
         self,
         source=None,
         stream: bool = False,
-        visual_prompts: Dict[str, List] = {},
+        visual_prompts: dict[str, list] = {},
         refer_image=None,
-        predictor=None,
+        predictor=yolo.yoloe.YOLOEVPDetectPredictor,
         **kwargs,
     ):
         """
@@ -406,18 +406,20 @@ class YOLOE(Model):
                 f"Expected equal number of bounding boxes and classes, but got {len(visual_prompts['bboxes'])} and "
                 f"{len(visual_prompts['cls'])} respectively"
             )
-        self.predictor = (predictor or self._smart_load("predictor"))(
-            overrides={
-                "task": self.model.task,
-                "mode": "predict",
-                "save": False,
-                "verbose": refer_image is None,
-                "batch": 1,
-            },
-            _callbacks=self.callbacks,
-        )
+            if type(self.predictor) is not predictor:
+                self.predictor = predictor(
+                    overrides={
+                        "task": self.model.task,
+                        "mode": "predict",
+                        "save": False,
+                        "verbose": refer_image is None,
+                        "batch": 1,
+                        "device": kwargs.get("device", None),
+                        "half": kwargs.get("half", False),
+                    },
+                    _callbacks=self.callbacks,
+                )
 
-        if len(visual_prompts):
             num_cls = (
                 max(len(set(c)) for c in visual_prompts["cls"])
                 if isinstance(source, list) and refer_image is None  # means multiple images
@@ -426,18 +428,19 @@ class YOLOE(Model):
             self.model.model[-1].nc = num_cls
             self.model.names = [f"object{i}" for i in range(num_cls)]
             self.predictor.set_prompts(visual_prompts.copy())
+            self.predictor.setup_model(model=self.model)
 
-        self.predictor.setup_model(model=self.model)
-
-        if refer_image is None and source is not None:
-            dataset = load_inference_source(source)
-            if dataset.mode in {"video", "stream"}:
-                # NOTE: set the first frame as refer image for videos/streams inference
-                refer_image = next(iter(dataset))[1][0]
-        if refer_image is not None and len(visual_prompts):
-            vpe = self.predictor.get_vpe(refer_image)
-            self.model.set_classes(self.model.names, vpe)
-            self.task = "segment" if isinstance(self.predictor, yolo.segment.SegmentationPredictor) else "detect"
-            self.predictor = None  # reset predictor
+            if refer_image is None and source is not None:
+                dataset = load_inference_source(source)
+                if dataset.mode in {"video", "stream"}:
+                    # NOTE: set the first frame as refer image for videos/streams inference
+                    refer_image = next(iter(dataset))[1][0]
+            if refer_image is not None:
+                vpe = self.predictor.get_vpe(refer_image)
+                self.model.set_classes(self.model.names, vpe)
+                self.task = "segment" if isinstance(self.predictor, yolo.segment.SegmentationPredictor) else "detect"
+                self.predictor = None  # reset predictor
+        elif isinstance(self.predictor, yolo.yoloe.YOLOEVPDetectPredictor):
+            self.predictor = None  # reset predictor if no visual prompts
 
         return super().predict(source, stream, **kwargs)

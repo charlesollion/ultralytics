@@ -5,10 +5,12 @@ Ultralytics Results, Boxes and Masks classes for handling inference results.
 Usage: See https://docs.ultralytics.com/modes/predict/
 """
 
+from __future__ import annotations
+
 from copy import deepcopy
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import numpy as np
 import torch
@@ -16,7 +18,6 @@ import torch
 from ultralytics.data.augment import LetterBox
 from ultralytics.utils import LOGGER, DataExportMixin, SimpleClass, ops
 from ultralytics.utils.plotting import Annotator, colors, save_one_box
-from ultralytics.utils.torch_utils import smart_inference_mode
 
 
 class BaseTensor(SimpleClass):
@@ -47,7 +48,7 @@ class BaseTensor(SimpleClass):
         >>> gpu_tensor = base_tensor.cuda()
     """
 
-    def __init__(self, data: Union[torch.Tensor, np.ndarray], orig_shape: Tuple[int, int]) -> None:
+    def __init__(self, data: torch.Tensor | np.ndarray, orig_shape: tuple[int, int]) -> None:
         """
         Initialize BaseTensor with prediction data and the original shape of the image.
 
@@ -66,7 +67,7 @@ class BaseTensor(SimpleClass):
         self.orig_shape = orig_shape
 
     @property
-    def shape(self) -> Tuple[int, ...]:
+    def shape(self) -> tuple[int, ...]:
         """
         Return the shape of the underlying data tensor.
 
@@ -197,7 +198,7 @@ class Results(SimpleClass, DataExportMixin):
     It supports visualization, data export, and various coordinate transformations.
 
     Attributes:
-        orig_img (numpy.ndarray): The original image as a numpy array.
+        orig_img (np.ndarray): The original image as a numpy array.
         orig_shape (Tuple[int, int]): Original image shape in (height, width) format.
         boxes (Boxes | None): Detected bounding boxes.
         masks (Masks | None): Segmentation masks.
@@ -223,12 +224,9 @@ class Results(SimpleClass, DataExportMixin):
         save_txt: Save detection results to a text file.
         save_crop: Save cropped detection images to specified directory.
         summary: Convert inference results to a summarized dictionary.
-        to_df: Convert detection results to a Pandas Dataframe.
+        to_df: Convert detection results to a Polars Dataframe.
         to_json: Convert detection results to JSON format.
         to_csv: Convert detection results to a CSV format.
-        to_xml: Convert detection results to XML format.
-        to_html: Convert detection results to HTML format.
-        to_sql: Convert detection results to an SQL-compatible format.
 
     Examples:
         >>> results = model("path/to/image.jpg")
@@ -243,19 +241,19 @@ class Results(SimpleClass, DataExportMixin):
         self,
         orig_img: np.ndarray,
         path: str,
-        names: Dict[int, str],
-        boxes: Optional[torch.Tensor] = None,
-        masks: Optional[torch.Tensor] = None,
-        probs: Optional[torch.Tensor] = None,
-        keypoints: Optional[torch.Tensor] = None,
-        obb: Optional[torch.Tensor] = None,
-        speed: Optional[Dict[str, float]] = None,
+        names: dict[int, str],
+        boxes: torch.Tensor | None = None,
+        masks: torch.Tensor | None = None,
+        probs: torch.Tensor | None = None,
+        keypoints: torch.Tensor | None = None,
+        obb: torch.Tensor | None = None,
+        speed: dict[str, float] | None = None,
     ) -> None:
         """
         Initialize the Results class for storing and manipulating inference results.
 
         Args:
-            orig_img (numpy.ndarray): The original image as a numpy array.
+            orig_img (np.ndarray): The original image as a numpy array.
             path (str): The path to the image file.
             names (dict): A dictionary of class names.
             boxes (torch.Tensor | None): A 2D tensor of bounding box coordinates for each detection.
@@ -328,11 +326,11 @@ class Results(SimpleClass, DataExportMixin):
 
     def update(
         self,
-        boxes: Optional[torch.Tensor] = None,
-        masks: Optional[torch.Tensor] = None,
-        probs: Optional[torch.Tensor] = None,
-        obb: Optional[torch.Tensor] = None,
-        keypoints: Optional[torch.Tensor] = None,
+        boxes: torch.Tensor | None = None,
+        masks: torch.Tensor | None = None,
+        probs: torch.Tensor | None = None,
+        obb: torch.Tensor | None = None,
+        keypoints: torch.Tensor | None = None,
     ):
         """
         Update the Results object with new detection data.
@@ -477,12 +475,12 @@ class Results(SimpleClass, DataExportMixin):
     def plot(
         self,
         conf: bool = True,
-        line_width: Optional[float] = None,
-        font_size: Optional[float] = None,
+        line_width: float | None = None,
+        font_size: float | None = None,
         font: str = "Arial.ttf",
         pil: bool = False,
-        img: Optional[np.ndarray] = None,
-        im_gpu: Optional[torch.Tensor] = None,
+        img: np.ndarray | None = None,
+        im_gpu: torch.Tensor | None = None,
         kpt_radius: int = 5,
         kpt_line: bool = True,
         labels: bool = True,
@@ -491,9 +489,9 @@ class Results(SimpleClass, DataExportMixin):
         probs: bool = True,
         show: bool = False,
         save: bool = False,
-        filename: Optional[str] = None,
+        filename: str | None = None,
         color_mode: str = "class",
-        txt_color: Tuple[int, int, int] = (255, 255, 255),
+        txt_color: tuple[int, int, int] = (255, 255, 255),
     ) -> np.ndarray:
         """
         Plot detection results on an input RGB image.
@@ -633,7 +631,7 @@ class Results(SimpleClass, DataExportMixin):
         """
         self.plot(show=True, *args, **kwargs)
 
-    def save(self, filename: Optional[str] = None, *args, **kwargs) -> str:
+    def save(self, filename: str | None = None, *args, **kwargs) -> str:
         """
         Save annotated inference results image to file.
 
@@ -685,16 +683,16 @@ class Results(SimpleClass, DataExportMixin):
             - For classification tasks, it returns the top 5 class probabilities and their corresponding class names.
             - The returned string is comma-separated and ends with a comma and a space.
         """
-        probs = self.probs
+        boxes = self.obb if self.obb is not None else self.boxes
         if len(self) == 0:
-            return "" if probs is not None else "(no detections), "
-        if probs is not None:
-            return f"{', '.join(f'{self.names[j]} {probs.data[j]:.2f}' for j in probs.top5)}, "
-        if boxes := self.boxes:
+            return "" if self.probs is not None else "(no detections), "
+        if self.probs is not None:
+            return f"{', '.join(f'{self.names[j]} {self.probs.data[j]:.2f}' for j in self.probs.top5)}, "
+        if boxes:
             counts = boxes.cls.int().bincount()
             return "".join(f"{n} {self.names[i]}{'s' * (n > 1)}, " for i, n in enumerate(counts) if n > 0)
 
-    def save_txt(self, txt_file: Union[str, Path], save_conf: bool = False) -> str:
+    def save_txt(self, txt_file: str | Path, save_conf: bool = False) -> str:
         """
         Save detection results to a text file.
 
@@ -751,7 +749,7 @@ class Results(SimpleClass, DataExportMixin):
 
         return str(txt_file)
 
-    def save_crop(self, save_dir: Union[str, Path], file_name: Union[str, Path] = Path("im.jpg")):
+    def save_crop(self, save_dir: str | Path, file_name: str | Path = Path("im.jpg")):
         """
         Save cropped detection images to specified directory.
 
@@ -787,7 +785,7 @@ class Results(SimpleClass, DataExportMixin):
                 BGR=True,
             )
 
-    def summary(self, normalize: bool = False, decimals: int = 5) -> List[Dict[str, Any]]:
+    def summary(self, normalize: bool = False, decimals: int = 5) -> list[dict[str, Any]]:
         """
         Convert inference results to a summarized dictionary with optional normalization for box coordinates.
 
@@ -801,7 +799,7 @@ class Results(SimpleClass, DataExportMixin):
             decimals (int): Number of decimal places to round the output values to.
 
         Returns:
-            (List[Dict]): A list of dictionaries, each containing summarized information for a single detection
+            (List[Dict[str, Any]]): A list of dictionaries, each containing summarized information for a single detection
                 or classification result. The structure of each dictionary varies based on the task type
                 (classification or detection) and available information (boxes, masks, keypoints).
 
@@ -863,16 +861,16 @@ class Boxes(BaseTensor):
     methods for easy manipulation and conversion between different coordinate systems.
 
     Attributes:
-        data (torch.Tensor | numpy.ndarray): The raw tensor containing detection boxes and associated data.
+        data (torch.Tensor | np.ndarray): The raw tensor containing detection boxes and associated data.
         orig_shape (Tuple[int, int]): The original image dimensions (height, width).
         is_track (bool): Indicates whether tracking IDs are included in the box data.
-        xyxy (torch.Tensor | numpy.ndarray): Boxes in [x1, y1, x2, y2] format.
-        conf (torch.Tensor | numpy.ndarray): Confidence scores for each box.
-        cls (torch.Tensor | numpy.ndarray): Class labels for each box.
+        xyxy (torch.Tensor | np.ndarray): Boxes in [x1, y1, x2, y2] format.
+        conf (torch.Tensor | np.ndarray): Confidence scores for each box.
+        cls (torch.Tensor | np.ndarray): Class labels for each box.
         id (torch.Tensor | None): Tracking IDs for each box (if available).
-        xywh (torch.Tensor | numpy.ndarray): Boxes in [x, y, width, height] format.
-        xyxyn (torch.Tensor | numpy.ndarray): Normalized [x1, y1, x2, y2] boxes relative to orig_shape.
-        xywhn (torch.Tensor | numpy.ndarray): Normalized [x, y, width, height] boxes relative to orig_shape.
+        xywh (torch.Tensor | np.ndarray): Boxes in [x, y, width, height] format.
+        xyxyn (torch.Tensor | np.ndarray): Normalized [x1, y1, x2, y2] boxes relative to orig_shape.
+        xywhn (torch.Tensor | np.ndarray): Normalized [x, y, width, height] boxes relative to orig_shape.
 
     Methods:
         cpu: Return a copy of the object with all tensors on CPU memory.
@@ -891,7 +889,7 @@ class Boxes(BaseTensor):
         >>> print(boxes.xywhn)
     """
 
-    def __init__(self, boxes: Union[torch.Tensor, np.ndarray], orig_shape: Tuple[int, int]) -> None:
+    def __init__(self, boxes: torch.Tensor | np.ndarray, orig_shape: tuple[int, int]) -> None:
         """
         Initialize the Boxes class with detection box data and the original image shape.
 
@@ -927,12 +925,12 @@ class Boxes(BaseTensor):
         self.orig_shape = orig_shape
 
     @property
-    def xyxy(self) -> Union[torch.Tensor, np.ndarray]:
+    def xyxy(self) -> torch.Tensor | np.ndarray:
         """
         Return bounding boxes in [x1, y1, x2, y2] format.
 
         Returns:
-            (torch.Tensor | numpy.ndarray): A tensor or numpy array of shape (n, 4) containing bounding box
+            (torch.Tensor | np.ndarray): A tensor or numpy array of shape (n, 4) containing bounding box
                 coordinates in [x1, y1, x2, y2] format, where n is the number of boxes.
 
         Examples:
@@ -944,12 +942,12 @@ class Boxes(BaseTensor):
         return self.data[:, :4]
 
     @property
-    def conf(self) -> Union[torch.Tensor, np.ndarray]:
+    def conf(self) -> torch.Tensor | np.ndarray:
         """
         Return the confidence scores for each detection box.
 
         Returns:
-            (torch.Tensor | numpy.ndarray): A 1D tensor or array containing confidence scores for each detection,
+            (torch.Tensor | np.ndarray): A 1D tensor or array containing confidence scores for each detection,
                 with shape (N,) where N is the number of detections.
 
         Examples:
@@ -961,12 +959,12 @@ class Boxes(BaseTensor):
         return self.data[:, -2]
 
     @property
-    def cls(self) -> Union[torch.Tensor, np.ndarray]:
+    def cls(self) -> torch.Tensor | np.ndarray:
         """
         Return the class ID tensor representing category predictions for each bounding box.
 
         Returns:
-            (torch.Tensor | numpy.ndarray): A tensor or numpy array containing the class IDs for each detection box.
+            (torch.Tensor | np.ndarray): A tensor or numpy array containing the class IDs for each detection box.
                 The shape is (N,), where N is the number of boxes.
 
         Examples:
@@ -978,7 +976,7 @@ class Boxes(BaseTensor):
         return self.data[:, -1]
 
     @property
-    def id(self) -> Optional[Union[torch.Tensor, np.ndarray]]:
+    def id(self) -> torch.Tensor | np.ndarray | None:
         """
         Return the tracking IDs for each detection box if available.
 
@@ -1004,12 +1002,12 @@ class Boxes(BaseTensor):
 
     @property
     @lru_cache(maxsize=2)
-    def xywh(self) -> Union[torch.Tensor, np.ndarray]:
+    def xywh(self) -> torch.Tensor | np.ndarray:
         """
         Convert bounding boxes from [x1, y1, x2, y2] format to [x, y, width, height] format.
 
         Returns:
-            (torch.Tensor | numpy.ndarray): Boxes in [x_center, y_center, width, height] format, where x_center,
+            (torch.Tensor | np.ndarray): Boxes in [x_center, y_center, width, height] format, where x_center,
                 y_center are the coordinates of the center point of the bounding box, width, height are the
                 dimensions of the bounding box and the shape of the returned tensor is (N, 4), where N is the
                 number of boxes.
@@ -1025,7 +1023,7 @@ class Boxes(BaseTensor):
 
     @property
     @lru_cache(maxsize=2)
-    def xyxyn(self) -> Union[torch.Tensor, np.ndarray]:
+    def xyxyn(self) -> torch.Tensor | np.ndarray:
         """
         Return normalized bounding box coordinates relative to the original image size.
 
@@ -1033,7 +1031,7 @@ class Boxes(BaseTensor):
         normalized to the range [0, 1] based on the original image dimensions.
 
         Returns:
-            (torch.Tensor | numpy.ndarray): Normalized bounding box coordinates with shape (N, 4), where N is
+            (torch.Tensor | np.ndarray): Normalized bounding box coordinates with shape (N, 4), where N is
                 the number of boxes. Each row contains [x1, y1, x2, y2] values normalized to [0, 1].
 
         Examples:
@@ -1049,7 +1047,7 @@ class Boxes(BaseTensor):
 
     @property
     @lru_cache(maxsize=2)
-    def xywhn(self) -> Union[torch.Tensor, np.ndarray]:
+    def xywhn(self) -> torch.Tensor | np.ndarray:
         """
         Return normalized bounding boxes in [x, y, width, height] format.
 
@@ -1057,7 +1055,7 @@ class Boxes(BaseTensor):
         [x_center, y_center, width, height], where all values are relative to the original image dimensions.
 
         Returns:
-            (torch.Tensor | numpy.ndarray): Normalized bounding boxes with shape (N, 4), where N is the
+            (torch.Tensor | np.ndarray): Normalized bounding boxes with shape (N, 4), where N is the
                 number of boxes. Each row contains [x_center, y_center, width, height] values normalized
                 to [0, 1] based on the original image dimensions.
 
@@ -1081,10 +1079,10 @@ class Masks(BaseTensor):
     including methods for converting between pixel and normalized coordinates.
 
     Attributes:
-        data (torch.Tensor | numpy.ndarray): The raw tensor or array containing mask data.
+        data (torch.Tensor | np.ndarray): The raw tensor or array containing mask data.
         orig_shape (tuple): Original image shape in (height, width) format.
-        xy (List[numpy.ndarray]): A list of segments in pixel coordinates.
-        xyn (List[numpy.ndarray]): A list of normalized segments.
+        xy (List[np.ndarray]): A list of segments in pixel coordinates.
+        xyn (List[np.ndarray]): A list of normalized segments.
 
     Methods:
         cpu: Return a copy of the Masks object with the mask tensor on CPU memory.
@@ -1100,7 +1098,7 @@ class Masks(BaseTensor):
         >>> normalized_coords = masks.xyn
     """
 
-    def __init__(self, masks: Union[torch.Tensor, np.ndarray], orig_shape: Tuple[int, int]) -> None:
+    def __init__(self, masks: torch.Tensor | np.ndarray, orig_shape: tuple[int, int]) -> None:
         """
         Initialize the Masks class with detection mask data and the original image shape.
 
@@ -1121,7 +1119,7 @@ class Masks(BaseTensor):
 
     @property
     @lru_cache(maxsize=1)
-    def xyn(self) -> List[np.ndarray]:
+    def xyn(self) -> list[np.ndarray]:
         """
         Return normalized xy-coordinates of the segmentation masks.
 
@@ -1129,7 +1127,7 @@ class Masks(BaseTensor):
         are normalized relative to the original image shape.
 
         Returns:
-            (List[numpy.ndarray]): A list of numpy arrays, where each array contains the normalized xy-coordinates
+            (List[np.ndarray]): A list of numpy arrays, where each array contains the normalized xy-coordinates
                 of a single segmentation mask. Each array has shape (N, 2), where N is the number of points in the
                 mask contour.
 
@@ -1146,7 +1144,7 @@ class Masks(BaseTensor):
 
     @property
     @lru_cache(maxsize=1)
-    def xy(self) -> List[np.ndarray]:
+    def xy(self) -> list[np.ndarray]:
         """
         Return the [x, y] pixel coordinates for each segment in the mask tensor.
 
@@ -1154,7 +1152,7 @@ class Masks(BaseTensor):
         Masks object. The coordinates are scaled to match the original image dimensions.
 
         Returns:
-            (List[numpy.ndarray]): A list of numpy arrays, where each array contains the [x, y] pixel
+            (List[np.ndarray]): A list of numpy arrays, where each array contains the [x, y] pixel
                 coordinates for a single segmentation mask. Each array has shape (N, 2), where N is the
                 number of points in the segment.
 
@@ -1204,8 +1202,7 @@ class Keypoints(BaseTensor):
         >>> keypoints_cpu = keypoints.cpu()  # Move keypoints to CPU
     """
 
-    @smart_inference_mode()  # avoid keypoints < conf in-place error
-    def __init__(self, keypoints: Union[torch.Tensor, np.ndarray], orig_shape: Tuple[int, int]) -> None:
+    def __init__(self, keypoints: torch.Tensor | np.ndarray, orig_shape: tuple[int, int]) -> None:
         """
         Initialize the Keypoints object with detection keypoints and original image dimensions.
 
@@ -1225,15 +1222,12 @@ class Keypoints(BaseTensor):
         """
         if keypoints.ndim == 2:
             keypoints = keypoints[None, :]
-        if keypoints.shape[2] == 3:  # x, y, conf
-            mask = keypoints[..., 2] < 0.5  # points with conf < 0.5 (not visible)
-            keypoints[..., :2][mask] = 0
         super().__init__(keypoints, orig_shape)
         self.has_visible = self.data.shape[-1] == 3
 
     @property
     @lru_cache(maxsize=1)
-    def xy(self) -> Union[torch.Tensor, np.ndarray]:
+    def xy(self) -> torch.Tensor | np.ndarray:
         """
         Return x, y coordinates of keypoints.
 
@@ -1257,12 +1251,12 @@ class Keypoints(BaseTensor):
 
     @property
     @lru_cache(maxsize=1)
-    def xyn(self) -> Union[torch.Tensor, np.ndarray]:
+    def xyn(self) -> torch.Tensor | np.ndarray:
         """
         Return normalized coordinates (x, y) of keypoints relative to the original image size.
 
         Returns:
-            (torch.Tensor | numpy.ndarray): A tensor or array of shape (N, K, 2) containing normalized keypoint
+            (torch.Tensor | np.ndarray): A tensor or array of shape (N, K, 2) containing normalized keypoint
                 coordinates, where N is the number of instances, K is the number of keypoints, and the last
                 dimension contains [x, y] values in the range [0, 1].
 
@@ -1279,7 +1273,7 @@ class Keypoints(BaseTensor):
 
     @property
     @lru_cache(maxsize=1)
-    def conf(self) -> Optional[Union[torch.Tensor, np.ndarray]]:
+    def conf(self) -> torch.Tensor | np.ndarray | None:
         """
         Return confidence values for each keypoint.
 
@@ -1304,12 +1298,12 @@ class Probs(BaseTensor):
     classification probabilities, including top-1 and top-5 predictions.
 
     Attributes:
-        data (torch.Tensor | numpy.ndarray): The raw tensor or array containing classification probabilities.
+        data (torch.Tensor | np.ndarray): The raw tensor or array containing classification probabilities.
         orig_shape (tuple | None): The original image shape as (height, width). Not used in this class.
         top1 (int): Index of the class with the highest probability.
         top5 (List[int]): Indices of the top 5 classes by probability.
-        top1conf (torch.Tensor | numpy.ndarray): Confidence score of the top 1 class.
-        top5conf (torch.Tensor | numpy.ndarray): Confidence scores of the top 5 classes.
+        top1conf (torch.Tensor | np.ndarray): Confidence score of the top 1 class.
+        top5conf (torch.Tensor | np.ndarray): Confidence scores of the top 5 classes.
 
     Methods:
         cpu: Return a copy of the probabilities tensor on CPU memory.
@@ -1330,7 +1324,7 @@ class Probs(BaseTensor):
         tensor([0.6000, 0.3000, 0.1000])
     """
 
-    def __init__(self, probs: Union[torch.Tensor, np.ndarray], orig_shape: Optional[Tuple[int, int]] = None) -> None:
+    def __init__(self, probs: torch.Tensor | np.ndarray, orig_shape: tuple[int, int] | None = None) -> None:
         """
         Initialize the Probs class with classification probabilities.
 
@@ -1380,7 +1374,7 @@ class Probs(BaseTensor):
 
     @property
     @lru_cache(maxsize=1)
-    def top5(self) -> List[int]:
+    def top5(self) -> list[int]:
         """
         Return the indices of the top 5 class probabilities.
 
@@ -1396,7 +1390,7 @@ class Probs(BaseTensor):
 
     @property
     @lru_cache(maxsize=1)
-    def top1conf(self) -> Union[torch.Tensor, np.ndarray]:
+    def top1conf(self) -> torch.Tensor | np.ndarray:
         """
         Return the confidence score of the highest probability class.
 
@@ -1404,7 +1398,7 @@ class Probs(BaseTensor):
         from the classification results.
 
         Returns:
-            (torch.Tensor | numpy.ndarray): A tensor containing the confidence score of the top 1 class.
+            (torch.Tensor | np.ndarray): A tensor containing the confidence score of the top 1 class.
 
         Examples:
             >>> results = model("image.jpg")  # classify an image
@@ -1416,7 +1410,7 @@ class Probs(BaseTensor):
 
     @property
     @lru_cache(maxsize=1)
-    def top5conf(self) -> Union[torch.Tensor, np.ndarray]:
+    def top5conf(self) -> torch.Tensor | np.ndarray:
         """
         Return confidence scores for the top 5 classification predictions.
 
@@ -1425,7 +1419,7 @@ class Probs(BaseTensor):
         along with their associated confidence levels.
 
         Returns:
-            (torch.Tensor | numpy.ndarray): A tensor or array containing the confidence scores for the
+            (torch.Tensor | np.ndarray): A tensor or array containing the confidence scores for the
                 top 5 predicted classes, sorted in descending order of probability.
 
         Examples:
@@ -1449,13 +1443,13 @@ class OBB(BaseTensor):
         data (torch.Tensor): The raw OBB tensor containing box coordinates and associated data.
         orig_shape (tuple): Original image size as (height, width).
         is_track (bool): Indicates whether tracking IDs are included in the box data.
-        xywhr (torch.Tensor | numpy.ndarray): Boxes in [x_center, y_center, width, height, rotation] format.
-        conf (torch.Tensor | numpy.ndarray): Confidence scores for each box.
-        cls (torch.Tensor | numpy.ndarray): Class labels for each box.
-        id (torch.Tensor | numpy.ndarray): Tracking IDs for each box, if available.
-        xyxyxyxy (torch.Tensor | numpy.ndarray): Boxes in 8-point [x1, y1, x2, y2, x3, y3, x4, y4] format.
-        xyxyxyxyn (torch.Tensor | numpy.ndarray): Normalized 8-point coordinates relative to orig_shape.
-        xyxy (torch.Tensor | numpy.ndarray): Axis-aligned bounding boxes in [x1, y1, x2, y2] format.
+        xywhr (torch.Tensor | np.ndarray): Boxes in [x_center, y_center, width, height, rotation] format.
+        conf (torch.Tensor | np.ndarray): Confidence scores for each box.
+        cls (torch.Tensor | np.ndarray): Class labels for each box.
+        id (torch.Tensor | np.ndarray): Tracking IDs for each box, if available.
+        xyxyxyxy (torch.Tensor | np.ndarray): Boxes in 8-point [x1, y1, x2, y2, x3, y3, x4, y4] format.
+        xyxyxyxyn (torch.Tensor | np.ndarray): Normalized 8-point coordinates relative to orig_shape.
+        xyxy (torch.Tensor | np.ndarray): Axis-aligned bounding boxes in [x1, y1, x2, y2] format.
 
     Methods:
         cpu: Return a copy of the OBB object with all tensors on CPU memory.
@@ -1471,7 +1465,7 @@ class OBB(BaseTensor):
         >>> print(obb.cls)
     """
 
-    def __init__(self, boxes: Union[torch.Tensor, np.ndarray], orig_shape: Tuple[int, int]) -> None:
+    def __init__(self, boxes: torch.Tensor | np.ndarray, orig_shape: tuple[int, int]) -> None:
         """
         Initialize an OBB (Oriented Bounding Box) instance with oriented bounding box data and original image shape.
 
@@ -1479,13 +1473,13 @@ class OBB(BaseTensor):
         various properties and methods to access and transform the OBB data.
 
         Args:
-            boxes (torch.Tensor | numpy.ndarray): A tensor or numpy array containing the detection boxes,
+            boxes (torch.Tensor | np.ndarray): A tensor or numpy array containing the detection boxes,
                 with shape (num_boxes, 7) or (num_boxes, 8). The last two columns contain confidence and class values.
                 If present, the third last column contains track IDs, and the fifth column contains rotation.
             orig_shape (Tuple[int, int]): Original image size, in the format (height, width).
 
         Attributes:
-            data (torch.Tensor | numpy.ndarray): The raw OBB tensor.
+            data (torch.Tensor | np.ndarray): The raw OBB tensor.
             orig_shape (Tuple[int, int]): The original image shape.
             is_track (bool): Whether the boxes include tracking IDs.
 
@@ -1508,12 +1502,12 @@ class OBB(BaseTensor):
         self.orig_shape = orig_shape
 
     @property
-    def xywhr(self) -> Union[torch.Tensor, np.ndarray]:
+    def xywhr(self) -> torch.Tensor | np.ndarray:
         """
         Return boxes in [x_center, y_center, width, height, rotation] format.
 
         Returns:
-            (torch.Tensor | numpy.ndarray): A tensor or numpy array containing the oriented bounding boxes with format
+            (torch.Tensor | np.ndarray): A tensor or numpy array containing the oriented bounding boxes with format
                 [x_center, y_center, width, height, rotation]. The shape is (N, 5) where N is the number of boxes.
 
         Examples:
@@ -1526,7 +1520,7 @@ class OBB(BaseTensor):
         return self.data[:, :5]
 
     @property
-    def conf(self) -> Union[torch.Tensor, np.ndarray]:
+    def conf(self) -> torch.Tensor | np.ndarray:
         """
         Return the confidence scores for Oriented Bounding Boxes (OBBs).
 
@@ -1534,7 +1528,7 @@ class OBB(BaseTensor):
         represents the model's certainty in the detection.
 
         Returns:
-            (torch.Tensor | numpy.ndarray): A tensor or numpy array of shape (N,) containing confidence scores
+            (torch.Tensor | np.ndarray): A tensor or numpy array of shape (N,) containing confidence scores
                 for N detections, where each score is in the range [0, 1].
 
         Examples:
@@ -1546,12 +1540,12 @@ class OBB(BaseTensor):
         return self.data[:, -2]
 
     @property
-    def cls(self) -> Union[torch.Tensor, np.ndarray]:
+    def cls(self) -> torch.Tensor | np.ndarray:
         """
         Return the class values of the oriented bounding boxes.
 
         Returns:
-            (torch.Tensor | numpy.ndarray): A tensor or numpy array containing the class values for each oriented
+            (torch.Tensor | np.ndarray): A tensor or numpy array containing the class values for each oriented
                 bounding box. The shape is (N,), where N is the number of boxes.
 
         Examples:
@@ -1564,12 +1558,12 @@ class OBB(BaseTensor):
         return self.data[:, -1]
 
     @property
-    def id(self) -> Optional[Union[torch.Tensor, np.ndarray]]:
+    def id(self) -> torch.Tensor | np.ndarray | None:
         """
         Return the tracking IDs of the oriented bounding boxes (if available).
 
         Returns:
-            (torch.Tensor | numpy.ndarray | None): A tensor or numpy array containing the tracking IDs for each
+            (torch.Tensor | np.ndarray | None): A tensor or numpy array containing the tracking IDs for each
                 oriented bounding box. Returns None if tracking IDs are not available.
 
         Examples:
@@ -1584,12 +1578,12 @@ class OBB(BaseTensor):
 
     @property
     @lru_cache(maxsize=2)
-    def xyxyxyxy(self) -> Union[torch.Tensor, np.ndarray]:
+    def xyxyxyxy(self) -> torch.Tensor | np.ndarray:
         """
         Convert OBB format to 8-point (xyxyxyxy) coordinate format for rotated bounding boxes.
 
         Returns:
-            (torch.Tensor | numpy.ndarray): Rotated bounding boxes in xyxyxyxy format with shape (N, 4, 2), where N is
+            (torch.Tensor | np.ndarray): Rotated bounding boxes in xyxyxyxy format with shape (N, 4, 2), where N is
                 the number of boxes. Each box is represented by 4 points (x, y), starting from the top-left corner and
                 moving clockwise.
 
@@ -1603,12 +1597,12 @@ class OBB(BaseTensor):
 
     @property
     @lru_cache(maxsize=2)
-    def xyxyxyxyn(self) -> Union[torch.Tensor, np.ndarray]:
+    def xyxyxyxyn(self) -> torch.Tensor | np.ndarray:
         """
         Convert rotated bounding boxes to normalized xyxyxyxy format.
 
         Returns:
-            (torch.Tensor | numpy.ndarray): Normalized rotated bounding boxes in xyxyxyxy format with shape (N, 4, 2),
+            (torch.Tensor | np.ndarray): Normalized rotated bounding boxes in xyxyxyxy format with shape (N, 4, 2),
                 where N is the number of boxes. Each box is represented by 4 points (x, y), normalized relative to
                 the original image dimensions.
 
@@ -1625,7 +1619,7 @@ class OBB(BaseTensor):
 
     @property
     @lru_cache(maxsize=2)
-    def xyxy(self) -> Union[torch.Tensor, np.ndarray]:
+    def xyxy(self) -> torch.Tensor | np.ndarray:
         """
         Convert oriented bounding boxes (OBB) to axis-aligned bounding boxes in xyxy format.
 
@@ -1634,7 +1628,7 @@ class OBB(BaseTensor):
         as IoU calculation with non-rotated boxes.
 
         Returns:
-            (torch.Tensor | numpy.ndarray): Axis-aligned bounding boxes in xyxy format with shape (N, 4), where N
+            (torch.Tensor | np.ndarray): Axis-aligned bounding boxes in xyxy format with shape (N, 4), where N
                 is the number of boxes. Each row contains [x1, y1, x2, y2] coordinates.
 
         Examples:

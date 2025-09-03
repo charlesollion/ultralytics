@@ -1,8 +1,10 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
+from __future__ import annotations
+
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import numpy as np
 import torch
@@ -50,7 +52,7 @@ class SegmentationValidator(DetectionValidator):
         self.args.task = "segment"
         self.metrics = SegmentMetrics()
 
-    def preprocess(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+    def preprocess(self, batch: dict[str, Any]) -> dict[str, Any]:
         """
         Preprocess batch of images for YOLO segmentation validation.
 
@@ -61,7 +63,7 @@ class SegmentationValidator(DetectionValidator):
             (Dict[str, Any]): Preprocessed batch.
         """
         batch = super().preprocess(batch)
-        batch["masks"] = batch["masks"].to(self.device).float()
+        batch["masks"] = batch["masks"].to(self.device, non_blocking=True).float()
         return batch
 
     def init_metrics(self, model: torch.nn.Module) -> None:
@@ -73,7 +75,7 @@ class SegmentationValidator(DetectionValidator):
         """
         super().init_metrics(model)
         if self.args.save_json:
-            check_requirements("pycocotools>=2.0.6")
+            check_requirements("faster-coco-eval>=1.6.7")
         # More accurate vs faster
         self.process = ops.process_mask_native if self.args.save_json or self.args.save_txt else ops.process_mask
 
@@ -93,7 +95,7 @@ class SegmentationValidator(DetectionValidator):
             "mAP50-95)",
         )
 
-    def postprocess(self, preds: List[torch.Tensor]) -> List[Dict[str, torch.Tensor]]:
+    def postprocess(self, preds: list[torch.Tensor]) -> list[dict[str, torch.Tensor]]:
         """
         Post-process YOLO predictions and return output detections with proto.
 
@@ -111,11 +113,15 @@ class SegmentationValidator(DetectionValidator):
             pred["masks"] = (
                 self.process(proto[i], coefficient, pred["bboxes"], shape=imgsz)
                 if len(coefficient)
-                else torch.zeros((0, imgsz[0], imgsz[1]), dtype=torch.uint8, device=pred["bboxes"].device)
+                else torch.zeros(
+                    (0, *(imgsz if self.process is ops.process_mask_native else proto.shape[2:])),
+                    dtype=torch.uint8,
+                    device=pred["bboxes"].device,
+                )
             )
         return preds
 
-    def _prepare_batch(self, si: int, batch: Dict[str, Any]) -> Dict[str, Any]:
+    def _prepare_batch(self, si: int, batch: dict[str, Any]) -> dict[str, Any]:
         """
         Prepare a batch for training or inference by processing images and targets.
 
@@ -131,30 +137,7 @@ class SegmentationValidator(DetectionValidator):
         prepared_batch["masks"] = batch["masks"][midx]
         return prepared_batch
 
-    def _prepare_pred(self, pred: Dict[str, torch.Tensor], pbatch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
-        """
-        Prepare predictions for evaluation by processing bounding boxes and masks.
-
-        Args:
-            pred (Dict[str, torch.Tensor]): Post-processed predictions from the model.
-            pbatch (Dict[str, Any]): Prepared batch information.
-
-        Returns:
-            Dict[str, torch.Tensor]: Processed bounding box predictions.
-        """
-        predn = super()._prepare_pred(pred, pbatch)
-        predn["masks"] = pred["masks"]
-        if self.args.save_json and len(predn["masks"]):
-            coco_masks = torch.as_tensor(pred["masks"], dtype=torch.uint8)
-            coco_masks = ops.scale_image(
-                coco_masks.permute(1, 2, 0).contiguous().cpu().numpy(),
-                pbatch["ori_shape"],
-                ratio_pad=pbatch["ratio_pad"],
-            )
-            predn["coco_masks"] = coco_masks
-        return predn
-
-    def _process_batch(self, preds: Dict[str, torch.Tensor], batch: Dict[str, Any]) -> Dict[str, np.ndarray]:
+    def _process_batch(self, preds: dict[str, torch.Tensor], batch: dict[str, Any]) -> dict[str, np.ndarray]:
         """
         Compute correct prediction matrix for a batch based on bounding boxes and optional masks.
 
@@ -193,7 +176,7 @@ class SegmentationValidator(DetectionValidator):
         tp.update({"tp_m": tp_m})  # update tp with mask IoU
         return tp
 
-    def plot_predictions(self, batch: Dict[str, Any], preds: List[Dict[str, torch.Tensor]], ni: int) -> None:
+    def plot_predictions(self, batch: dict[str, Any], preds: list[dict[str, torch.Tensor]], ni: int) -> None:
         """
         Plot batch predictions with masks and bounding boxes.
 
@@ -209,7 +192,7 @@ class SegmentationValidator(DetectionValidator):
             p["masks"] = torch.as_tensor(masks[:50], dtype=torch.uint8).cpu()
         super().plot_predictions(batch, preds, ni, max_det=50)  # plot bboxes
 
-    def save_one_txt(self, predn: torch.Tensor, save_conf: bool, shape: Tuple[int, int], file: Path) -> None:
+    def save_one_txt(self, predn: torch.Tensor, save_conf: bool, shape: tuple[int, int], file: Path) -> None:
         """
         Save YOLO detections to a txt file in normalized coordinates in a specific format.
 
@@ -229,18 +212,15 @@ class SegmentationValidator(DetectionValidator):
             masks=torch.as_tensor(predn["masks"], dtype=torch.uint8),
         ).save_txt(file, save_conf=save_conf)
 
-    def pred_to_json(self, predn: torch.Tensor, filename: str) -> None:
+    def pred_to_json(self, predn: dict[str, torch.Tensor], pbatch: dict[str, Any]) -> None:
         """
         Save one JSON result for COCO evaluation.
 
         Args:
             predn (Dict[str, torch.Tensor]): Predictions containing bboxes, masks, confidence scores, and classes.
-            filename (str): Image filename.
-
-        Examples:
-             >>> result = {"image_id": 42, "category_id": 18, "bbox": [258.15, 41.29, 348.26, 243.78], "score": 0.236}
+            pbatch (Dict[str, Any]): Batch dictionary containing 'imgsz', 'ori_shape', 'ratio_pad', and 'im_file'.
         """
-        from pycocotools.mask import encode  # noqa
+        from faster_coco_eval.core.mask import encode  # noqa
 
         def single_encode(x):
             """Encode predicted masks as RLE and append results to jdict."""
@@ -248,76 +228,30 @@ class SegmentationValidator(DetectionValidator):
             rle["counts"] = rle["counts"].decode("utf-8")
             return rle
 
-        stem = Path(filename).stem
-        image_id = int(stem) if stem.isnumeric() else stem
-        box = ops.xyxy2xywh(predn["bboxes"])  # xywh
-        box[:, :2] -= box[:, 2:] / 2  # xy center to top-left corner
-        pred_masks = np.transpose(predn["coco_masks"], (2, 0, 1))
+        pred_masks = np.transpose(predn["masks"], (2, 0, 1))
         with ThreadPool(NUM_THREADS) as pool:
             rles = pool.map(single_encode, pred_masks)
-        for i, (b, s, c) in enumerate(zip(box.tolist(), predn["conf"].tolist(), predn["cls"].tolist())):
-            self.jdict.append(
-                {
-                    "image_id": image_id,
-                    "category_id": self.class_map[int(c)],
-                    "bbox": [round(x, 3) for x in b],
-                    "score": round(s, 5),
-                    "segmentation": rles[i],
-                }
-            )
+        super().pred_to_json(predn, pbatch)
+        for i, r in enumerate(rles):
+            self.jdict[-len(rles) + i]["segmentation"] = r  # segmentation
 
-    def eval_json(self, stats: Dict[str, Any]) -> Dict[str, Any]:
+    def scale_preds(self, predn: dict[str, torch.Tensor], pbatch: dict[str, Any]) -> dict[str, torch.Tensor]:
+        """Scales predictions to the original image size."""
+        return {
+            **super().scale_preds(predn, pbatch),
+            "masks": ops.scale_image(
+                torch.as_tensor(predn["masks"], dtype=torch.uint8).permute(1, 2, 0).contiguous().cpu().numpy(),
+                pbatch["ori_shape"],
+                ratio_pad=pbatch["ratio_pad"],
+            ),
+        }
+
+    def eval_json(self, stats: dict[str, Any]) -> dict[str, Any]:
         """Return COCO-style instance segmentation evaluation metrics."""
-        if self.args.save_json and (self.is_lvis or self.is_coco) and len(self.jdict):
-            pred_json = self.save_dir / "predictions.json"  # predictions
-
-            anno_json = (
-                self.data["path"]
-                / "annotations"
-                / ("instances_val2017.json" if self.is_coco else f"lvis_v1_{self.args.split}.json")
-            )  # annotations
-
-            pkg = "pycocotools" if self.is_coco else "lvis"
-            LOGGER.info(f"\nEvaluating {pkg} mAP using {pred_json} and {anno_json}...")
-            try:  # https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocoEvalDemo.ipynb
-                for x in anno_json, pred_json:
-                    assert x.is_file(), f"{x} file not found"
-                check_requirements("pycocotools>=2.0.6" if self.is_coco else "lvis>=0.5.3")
-                if self.is_coco:
-                    from pycocotools.coco import COCO  # noqa
-                    from pycocotools.cocoeval import COCOeval  # noqa
-
-                    anno = COCO(str(anno_json))  # init annotations api
-                    pred = anno.loadRes(str(pred_json))  # init predictions api (must pass string, not Path)
-                    vals = [COCOeval(anno, pred, "bbox"), COCOeval(anno, pred, "segm")]
-                else:
-                    from lvis import LVIS, LVISEval
-
-                    anno = LVIS(str(anno_json))
-                    pred = anno._load_json(str(pred_json))
-                    vals = [LVISEval(anno, pred, "bbox"), LVISEval(anno, pred, "segm")]
-
-                for i, eval in enumerate(vals):
-                    eval.params.imgIds = [int(Path(x).stem) for x in self.dataloader.dataset.im_files]  # im to eval
-                    eval.evaluate()
-                    eval.accumulate()
-                    eval.summarize()
-                    if self.is_lvis:
-                        eval.print_results()
-                    idx = i * 4 + 2
-                    # update mAP50-95 and mAP50
-                    stats[self.metrics.keys[idx + 1]], stats[self.metrics.keys[idx]] = (
-                        eval.stats[:2] if self.is_coco else [eval.results["AP"], eval.results["AP50"]]
-                    )
-                    if self.is_lvis:
-                        tag = "B" if i == 0 else "M"
-                        stats[f"metrics/APr({tag})"] = eval.results["APr"]
-                        stats[f"metrics/APc({tag})"] = eval.results["APc"]
-                        stats[f"metrics/APf({tag})"] = eval.results["APf"]
-
-                if self.is_lvis:
-                    stats["fitness"] = stats["metrics/mAP50-95(B)"]
-
-            except Exception as e:
-                LOGGER.warning(f"{pkg} unable to run: {e}")
-        return stats
+        pred_json = self.save_dir / "predictions.json"  # predictions
+        anno_json = (
+            self.data["path"]
+            / "annotations"
+            / ("instances_val2017.json" if self.is_coco else f"lvis_v1_{self.args.split}.json")
+        )  # annotations
+        return super().coco_evaluate(stats, pred_json, anno_json, ["bbox", "segm"], suffix=["Box", "Mask"])

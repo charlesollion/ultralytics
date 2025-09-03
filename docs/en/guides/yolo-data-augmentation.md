@@ -14,6 +14,17 @@ keywords: YOLO data augmentation, computer vision, deep learning, image transfor
 
 [Data augmentation](https://www.ultralytics.com/glossary/data-augmentation) is a crucial technique in computer vision that artificially expands your training dataset by applying various transformations to existing images. When training [deep learning](https://www.ultralytics.com/glossary/deep-learning-dl) models like Ultralytics YOLO, data augmentation helps improve model robustness, reduces overfitting, and enhances generalization to real-world scenarios.
 
+<p align="center">
+  <br>
+  <iframe loading="lazy" width="720" height="405" src="https://www.youtube.com/embed/e-TwqFtay90"
+    title="YouTube video player" frameborder="0"
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+    allowfullscreen>
+  </iframe>
+  <br>
+  <strong>Watch:</strong> How to use Mosaic, MixUp & more Data Augmentations to help Ultralytics YOLO Models generalize better 🚀
+</p>
+
 ### Why Data Augmentation Matters
 
 Data augmentation serves multiple critical purposes in training computer vision models:
@@ -354,7 +365,7 @@ Then launch the training with the Python API:
 - **Purpose**: Helps models learn robust features and prevents over-reliance on specific image regions. For example, in facial recognition systems, random erasing helps models become more robust to partial occlusions like sunglasses, face masks, or other objects that might partially cover facial features. This improves real-world performance by forcing the model to identify individuals using multiple facial characteristics rather than depending solely on distinctive features that might be obscured.
 - **Ultralytics' implementation**: [classify_augmentations()](https://docs.ultralytics.com/reference/data/augment/#ultralytics.data.augment.classify_augmentations)
 - **Note**:
-    - The `erasing` augmentation comes with a `scale`, `ratio`, and `value` hyperparameters that cannot be changed with the [current implementation](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/data/augment.py#L2502). Their default values are `(0.02, 0.33)`, `(0.3, 3.3)`, and `0`, respectively, as stated in the PyTorch [documentation](https://pytorch.org/vision/main/generated/torchvision.transforms.RandomErasing.html).
+    - The `erasing` augmentation comes with a `scale`, `ratio`, and `value` hyperparameters that cannot be changed with the [current implementation](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/data/augment.py#L2502). Their default values are `(0.02, 0.33)`, `(0.3, 3.3)`, and `0`, respectively, as stated in the PyTorch [documentation](https://docs.pytorch.org/vision/main/generated/torchvision.transforms.RandomErasing.html).
     - The upper limit of the `erasing` hyperparameter is set to `0.9` to avoid applying the transformation to all images.
 
 |                                                            **`erasing` off**                                                            |                                                         **`erasing` on (example 1)**                                                          |                                                         **`erasing` on (example 2)**                                                          |                                                         **`erasing` on (example 3)**                                                          |

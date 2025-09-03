@@ -32,11 +32,13 @@ Usage - formats:
                               yolo11n_rknn_model         # Rockchip RKNN
 """
 
+from __future__ import annotations
+
 import platform
 import re
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import cv2
 import numpy as np
@@ -109,8 +111,8 @@ class BasePredictor:
     def __init__(
         self,
         cfg=DEFAULT_CFG,
-        overrides: Optional[Dict[str, Any]] = None,
-        _callbacks: Optional[Dict[str, List[callable]]] = None,
+        overrides: dict[str, Any] | None = None,
+        _callbacks: dict[str, list[callable]] | None = None,
     ):
         """
         Initialize the BasePredictor class.
@@ -147,7 +149,7 @@ class BasePredictor:
         self._lock = threading.Lock()  # for automatic thread-safe inference
         callbacks.add_integration_callbacks(self)
 
-    def preprocess(self, im: Union[torch.Tensor, List[np.ndarray]]) -> torch.Tensor:
+    def preprocess(self, im: torch.Tensor | list[np.ndarray]) -> torch.Tensor:
         """
         Prepare input image before inference.
 
@@ -181,7 +183,7 @@ class BasePredictor:
         )
         return self.model(im, augment=self.args.augment, visualize=visualize, embed=self.args.embed, *args, **kwargs)
 
-    def pre_transform(self, im: List[np.ndarray]) -> List[np.ndarray]:
+    def pre_transform(self, im: list[np.ndarray]) -> list[np.ndarray]:
         """
         Pre-transform input image before inference.
 
@@ -389,12 +391,11 @@ class BasePredictor:
             verbose (bool): Whether to print verbose output.
         """
         self.model = AutoBackend(
-            weights=model or self.args.model,
+            model=model or self.args.model,
             device=select_device(self.args.device, verbose=verbose),
             dnn=self.args.dnn,
             data=self.args.data,
             fp16=self.args.half,
-            batch=self.args.batch,
             fuse=True,
             verbose=verbose,
         )
@@ -405,7 +406,7 @@ class BasePredictor:
             self.args.imgsz = self.model.imgsz  # reuse imgsz from export metadata
         self.model.eval()
 
-    def write_results(self, i: int, p: Path, im: torch.Tensor, s: List[str]) -> str:
+    def write_results(self, i: int, p: Path, im: torch.Tensor, s: list[str]) -> str:
         """
         Write inference results to a file or directory.
 
@@ -452,16 +453,16 @@ class BasePredictor:
         if self.args.show:
             self.show(str(p))
         if self.args.save:
-            self.save_predicted_images(str(self.save_dir / p.name), frame)
+            self.save_predicted_images(self.save_dir / p.name, frame)
 
         return string
 
-    def save_predicted_images(self, save_path: str = "", frame: int = 0):
+    def save_predicted_images(self, save_path: Path, frame: int = 0):
         """
         Save video predictions as mp4 or images as jpg at specified path.
 
         Args:
-            save_path (str): Path to save the results.
+            save_path (Path): Path to save the results.
             frame (int): Frame number for video mode.
         """
         im = self.plotted_img
@@ -469,7 +470,7 @@ class BasePredictor:
         # Save videos and streams
         if self.dataset.mode in {"stream", "video"}:
             fps = self.dataset.fps if self.dataset.mode == "video" else 30
-            frames_path = f"{save_path.split('.', 1)[0]}_frames/"
+            frames_path = self.save_dir / f"{save_path.stem}_frames"  # save frames to a separate directory
             if save_path not in self.vid_writer:  # new video
                 if self.args.save_frames:
                     Path(frames_path).mkdir(parents=True, exist_ok=True)
@@ -484,11 +485,11 @@ class BasePredictor:
             # Save video
             self.vid_writer[save_path].write(im)
             if self.args.save_frames:
-                cv2.imwrite(f"{frames_path}{frame}.jpg", im)
+                cv2.imwrite(f"{frames_path}/{save_path.stem}_{frame}.jpg", im)
 
         # Save images
         else:
-            cv2.imwrite(str(Path(save_path).with_suffix(".jpg")), im)  # save to JPG for best support
+            cv2.imwrite(str(save_path.with_suffix(".jpg")), im)  # save to JPG for best support
 
     def show(self, p: str = ""):
         """Display an image in a window."""
