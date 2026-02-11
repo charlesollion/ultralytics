@@ -578,7 +578,7 @@ class SegmentationModel(DetectionModel):
             LOGGER.warning("class weights found") 
         else:
             LOGGER.warning("no class weights found") 
-        return E2ELoss(self, v8SegmentationLoss) if getattr(self, "end2end", False) else v8SegmentationLoss(self, class_weights=class_weights)
+        return E2ELoss(self, v8SegmentationLoss, class_weights=class_weights) if getattr(self, "end2end", False) else v8SegmentationLoss(self, class_weights=class_weights)
 
 
 class PoseModel(DetectionModel):
