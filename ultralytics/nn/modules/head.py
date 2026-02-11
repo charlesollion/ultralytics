@@ -366,7 +366,7 @@ class Segment26(Segment):
         >>> outputs = segment(x)
     """
 
-    def __init__(self, nc: int = 80, nm: int = 32, npr: int = 256, reg_max=16, end2end=False, ch: tuple = ()):
+    def __init__(self, nc: int = 80, nm: int = 32, npr: int = 256, reg_max=16, end2end=False, c2=None, c3=None, light=False, ch: tuple = ()):
         """Initialize the YOLO model attributes such as the number of masks, prototypes, and the convolution layers.
 
         Args:
@@ -377,7 +377,7 @@ class Segment26(Segment):
             end2end (bool): Whether to use end-to-end NMS-free detection.
             ch (tuple): Tuple of channel sizes from backbone feature maps.
         """
-        super().__init__(nc, nm, npr, reg_max, end2end, ch)
+        super().__init__(nc, nm, npr, reg_max, end2end, c2, c3, light, ch)
         self.proto = Proto26(ch, self.npr, self.nm, nc)  # protos
 
     def forward(self, x: list[torch.Tensor]) -> tuple | list[torch.Tensor] | dict[str, torch.Tensor]:
