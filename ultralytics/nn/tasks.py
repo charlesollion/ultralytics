@@ -1690,12 +1690,11 @@ def parse_model(d, ch, verbose=True):
                 OBB26,
             }
         ):
-            args.extend([reg_max, end2end])
             if m is Detect and len(args) < 4:
                 args.extend([None, None, "standard"])
             if (m is Segment or m is Segment26) and len(args) < 6:
                 args.extend([None, None, "standard"])
-            args.append([ch[x] for x in f])
+            args.extend([reg_max, end2end, [ch[x] for x in f]])
             if m is Segment or m is YOLOESegment or m is Segment26 or m is YOLOESegment26:
                 args[2] = make_divisible(min(args[2], max_channels) * width, 8)
             if m in {Detect, YOLOEDetect, Segment, Segment26, YOLOESegment, YOLOESegment26, Pose, Pose26, OBB, OBB26}:
