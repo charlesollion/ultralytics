@@ -477,9 +477,9 @@ class v8DetectionLoss:
 class v8SegmentationLoss(v8DetectionLoss):
     """Criterion class for computing training losses for YOLOv8 segmentation."""
 
-    def __init__(self, model, tal_topk: int = 10, tal_topk2: int | None = None):  # model must be de-paralleled
+    def __init__(self, model, tal_topk: int = 10, tal_topk2: int | None = None, class_weights = None):  # model must be de-paralleled
         """Initialize the v8SegmentationLoss class with model parameters and mask overlap setting."""
-        super().__init__(model, tal_topk, tal_topk2)
+        super().__init__(model, tal_topk, tal_topk2, class_weights=class_weights)
         self.overlap = model.args.overlap_mask
         self.bcedice_loss = BCEDiceLoss(weight_bce=0.5, weight_dice=0.5)
 
