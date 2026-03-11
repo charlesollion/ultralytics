@@ -123,6 +123,7 @@ from ultralytics.utils.export import (
     onnx2saved_model,
     pb2tfjs,
     tflite2edgetpu,
+    torch2executorch,
     torch2imx,
     torch2onnx,
 )
@@ -136,6 +137,7 @@ from ultralytics.utils.torch_utils import (
     TORCH_1_11,
     TORCH_1_13,
     TORCH_2_1,
+    TORCH_2_3,
     TORCH_2_4,
     TORCH_2_9,
     select_device,
@@ -185,6 +187,8 @@ def best_onnx_opset(onnx, cuda=False) -> int:
     """Return max ONNX opset for this torch version with ONNX fallback."""
     if TORCH_2_4:  # _constants.ONNX_MAX_OPSET first defined in torch 1.13
         opset = torch.onnx.utils._constants.ONNX_MAX_OPSET - 1  # use second-latest version for safety
+        if TORCH_2_9:
+            opset = min(opset, 20)  # legacy TorchScript exporter caps at opset 20 in torch 2.9+
         if cuda:
             opset -= 2  # fix CUDA ONNXRuntime NMS squeeze op errors
     else:
@@ -214,7 +218,7 @@ def validate_args(format, passed_args, valid_args):
 
     Args:
         format (str): The export format.
-        passed_args (Namespace): The arguments used during export.
+        passed_args (SimpleNamespace): The arguments used during export.
         valid_args (list): List of valid arguments for the format.
 
     Raises:
@@ -271,7 +275,7 @@ class Exporter:
         pretty_name (str): Formatted model name for display purposes.
         metadata (dict): Model metadata including description, author, version, etc.
         device (torch.device): Device on which the model is loaded.
-        imgsz (tuple): Input image size for the model.
+        imgsz (list): Input image size for the model.
 
     Methods:
         __call__: Main export method that handles the export process.
@@ -310,7 +314,7 @@ class Exporter:
         """Initialize the Exporter class.
 
         Args:
-            cfg (str, optional): Path to a configuration file.
+            cfg (str | Path | dict | SimpleNamespace, optional): Configuration file path or configuration object.
             overrides (dict, optional): Configuration overrides.
             _callbacks (dict, optional): Dictionary of callback functions.
         """
@@ -412,7 +416,7 @@ class Exporter:
         if hasattr(model, "end2end"):
             if self.args.end2end is not None:
                 model.end2end = self.args.end2end
-            if rknn or ncnn or executorch or paddle or imx:
+            if rknn or ncnn or executorch or paddle or imx or edgetpu:
                 # Disable end2end branch for certain export formats as they does not support topk
                 model.end2end = False
                 LOGGER.warning(f"{fmt.upper()} export does not support end2end models, disabling end2end branch.")
@@ -508,6 +512,10 @@ class Exporter:
             from ultralytics.utils.export.tensorflow import tf_wrapper
 
             model = tf_wrapper(model)
+        if executorch:
+            from ultralytics.utils.export.executorch import executorch_wrapper
+
+            model = executorch_wrapper(model)
         for m in model.modules():
             if isinstance(m, Classify):
                 m.export = True
@@ -796,7 +804,7 @@ class Exporter:
             fq_ov = str(Path(fq) / self.file.with_suffix(".xml").name)
             # INT8 requires nncf, nncf requires packaging>=23.2 https://github.com/openvinotoolkit/nncf/issues/3463
             check_requirements("packaging>=23.2")  # must be installed first to build nncf wheel
-            check_requirements("nncf>=2.14.0")
+            check_requirements("nncf>=2.14.0,<3.0.0" if not TORCH_2_3 else "nncf>=2.14.0")
             import nncf
 
             # Generate calibration data for integer quantization
@@ -1156,7 +1164,7 @@ class Exporter:
 
     @try_export
     def export_axelera(self, prefix=colorstr("Axelera:")):
-        """YOLO Axelera export."""
+        """Export YOLO model to Axelera format."""
         os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
         try:
             from axelera import compiler
@@ -1223,33 +1231,10 @@ class Exporter:
 
     @try_export
     def export_executorch(self, prefix=colorstr("ExecuTorch:")):
-        """Exports a model to ExecuTorch (.pte) format into a dedicated directory and saves the required metadata,
-        following Ultralytics conventions.
-        """
-        LOGGER.info(f"\n{prefix} starting export with ExecuTorch...")
+        """Export YOLO model to ExecuTorch *.pte format."""
         assert TORCH_2_9, f"ExecuTorch requires torch>=2.9.0 but torch=={TORCH_VERSION} is installed"
-
         check_executorch_requirements()
-
-        from executorch.backends.xnnpack.partition.xnnpack_partitioner import XnnpackPartitioner
-        from executorch.exir import to_edge_transform_and_lower
-
-        file_directory = Path(str(self.file).replace(self.file.suffix, "_executorch_model"))
-        file_directory.mkdir(parents=True, exist_ok=True)
-
-        file_pte = file_directory / self.file.with_suffix(".pte").name
-        sample_inputs = (self.im,)
-
-        et_program = to_edge_transform_and_lower(
-            torch.export.export(self.model, sample_inputs), partitioner=[XnnpackPartitioner()]
-        ).to_executorch()
-
-        with open(file_pte, "wb") as file:
-            file.write(et_program.buffer)
-
-        YAML.save(file_directory / "metadata.yaml", self.metadata)
-
-        return str(file_directory)
+        return torch2executorch(self.model, self.file, self.im, metadata=self.metadata, prefix=prefix)
 
     @try_export
     def export_edgetpu(self, tflite_model="", prefix=colorstr("Edge TPU:")):
@@ -1293,6 +1278,7 @@ class Exporter:
         LOGGER.info(f"\n{prefix} starting export with rknn-toolkit2...")
 
         check_requirements("rknn-toolkit2")
+        check_requirements("onnx<1.19.0")  # fix AttributeError: module 'onnx' has no attribute 'mapping'
         if IS_COLAB:
             # Prevent 'exit' from closing the notebook https://github.com/airockchip/rknn-toolkit2/issues/259
             import builtins
@@ -1301,6 +1287,7 @@ class Exporter:
 
         from rknn.api import RKNN
 
+        self.args.opset = min(self.args.opset or 19, 19)  # rknn-toolkit expects opset<=19
         f = self.export_onnx()
         export_path = Path(f"{Path(f).stem}_rknn_model")
         export_path.mkdir(exist_ok=True)
@@ -1309,8 +1296,7 @@ class Exporter:
         rknn.config(mean_values=[[0, 0, 0]], std_values=[[255, 255, 255]], target_platform=self.args.name)
         rknn.load_onnx(model=f)
         rknn.build(do_quantization=False)  # TODO: Add quantization support
-        f = f.replace(".onnx", f"-{self.args.name}.rknn")
-        rknn.export_rknn(f"{export_path / f}")
+        rknn.export_rknn(str(export_path / f"{Path(f).stem}-{self.args.name}.rknn"))
         YAML.save(export_path / "metadata.yaml", self.metadata)
         return export_path
 
@@ -1321,7 +1307,6 @@ class Exporter:
             "Export only supported on Linux."
             "See https://developer.aitrios.sony-semicon.com/en/docs/raspberry-pi-ai-camera/imx500-converter?version=3.17.3&progLang="
         )
-        assert not ARM64, "IMX export is not supported on ARM64 architectures."
         assert IS_PYTHON_MINIMUM_3_9, "IMX export is only supported on Python 3.9 or above."
 
         if getattr(self.model, "end2end", False):
@@ -1491,7 +1476,7 @@ class IOSDetectModel(torch.nn.Module):
         Args:
             model (torch.nn.Module): The YOLO model to wrap.
             im (torch.Tensor): Example input tensor with shape (B, C, H, W).
-            mlprogram (bool): Whether exporting to MLProgram format to fix NMS bug.
+            mlprogram (bool): Whether exporting to MLProgram format.
         """
         super().__init__()
         _, _, h, w = im.shape  # batch, channel, height, width
@@ -1524,7 +1509,7 @@ class NMSModel(torch.nn.Module):
 
         Args:
             model (torch.nn.Module): The model to wrap with NMS postprocessing.
-            args (Namespace): The export arguments.
+            args (SimpleNamespace): The export arguments.
         """
         super().__init__()
         self.model = model
@@ -1536,11 +1521,11 @@ class NMSModel(torch.nn.Module):
         """Perform inference with NMS post-processing. Supports Detect, Segment, OBB and Pose.
 
         Args:
-            x (torch.Tensor): The preprocessed tensor with shape (N, 3, H, W).
+            x (torch.Tensor): The preprocessed tensor with shape (B, C, H, W).
 
         Returns:
-            (torch.Tensor): List of detections, each an (N, max_det, 4 + 2 + extra_shape) Tensor where N is the number
-                of detections after NMS.
+            (torch.Tensor | tuple): Tensor of shape (B, max_det, 4 + 2 + extra_shape) where B is the batch size, or a
+                tuple of (detections, proto) for segmentation models.
         """
         from functools import partial
 
