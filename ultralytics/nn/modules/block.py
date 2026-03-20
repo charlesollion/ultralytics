@@ -37,6 +37,7 @@ __all__ = (
     "C2fPSA",
     "C3Ghost",
     "C3k2",
+    "C3k2Rep",
     "C3x",
     "CBFuse",
     "CBLinear",
@@ -1125,6 +1126,53 @@ class C3k(C3):
         c_ = int(c2 * e)  # hidden channels
         # self.m = nn.Sequential(*(RepBottleneck(c_, c_, shortcut, g, k=(k, k), e=1.0) for _ in range(n)))
         self.m = nn.Sequential(*(Bottleneck(c_, c_, shortcut, g, k=(k, k), e=1.0) for _ in range(n)))
+
+
+class C3kRep(C3):
+    """C3k with RepBottleneck for reparameterizable training."""
+
+    def __init__(self, c1: int, c2: int, n: int = 1, shortcut: bool = True, g: int = 1, e: float = 0.5, k: int = 3):
+        """Initialize C3kRep module with RepBottleneck blocks.
+
+        Args:
+            c1 (int): Input channels.
+            c2 (int): Output channels.
+            n (int): Number of RepBottleneck blocks.
+            shortcut (bool): Whether to use shortcut connections.
+            g (int): Groups for convolutions.
+            e (float): Expansion ratio.
+            k (int): Kernel size.
+        """
+        super().__init__(c1, c2, n, shortcut, g, e)
+        c_ = int(c2 * e)  # hidden channels
+        self.m = nn.Sequential(*(RepBottleneck(c_, c_, shortcut, g, k=(k, k), e=1.0) for _ in range(n)))
+
+
+class C3k2Rep(C3k2):
+    """C3k2 variant using RepBottleneck in C3k blocks for reparameterizable training.
+
+    During training, RepConv uses 3x3 + 1x1 parallel branches for extra capacity.
+    At export/fuse time, branches collapse into a single 3x3 conv (zero extra inference cost).
+    """
+
+    def __init__(self, c1: int, c2: int, n: int = 1, c3k: bool = False, e: float = 0.5,
+                 attn: bool = False, g: int = 1, shortcut: bool = True):
+        """Initialize C3k2Rep module.
+
+        Args:
+            c1 (int): Input channels.
+            c2 (int): Output channels.
+            n (int): Number of blocks.
+            c3k (bool): Whether to use C3kRep blocks.
+            e (float): Expansion ratio.
+            attn (bool): Whether to use attention blocks.
+            g (int): Groups for convolutions.
+            shortcut (bool): Whether to use shortcut connections.
+        """
+        super().__init__(c1, c2, n, c3k, e, attn, g, shortcut)
+        # Override: when c3k=True and not attn, use RepBottleneck via C3kRep
+        if c3k and not attn:
+            self.m = nn.ModuleList(C3kRep(self.c, self.c, 2, shortcut, g) for _ in range(n))
 
 
 class RepVGGDW(torch.nn.Module):
