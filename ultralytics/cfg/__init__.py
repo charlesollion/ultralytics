@@ -187,6 +187,7 @@ CFG_FRACTION_KEYS = frozenset(
         "iou",
         "fraction",
         "multi_scale",
+        "label_smoothing",
     }
 )
 CFG_INT_KEYS = frozenset(
@@ -445,7 +446,7 @@ def _handle_deprecation(custom: dict) -> dict:
         "hide_conf": ("show_conf", lambda v: not bool(v)),
         "line_thickness": ("line_width", lambda v: v),
     }
-    removed_keys = {"label_smoothing", "save_hybrid", "crop_fraction"}
+    removed_keys = {"save_hybrid", "crop_fraction"}
 
     for old_key, (new_key, transform) in deprecated_mappings.items():
         if old_key not in custom:

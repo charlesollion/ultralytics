@@ -37,6 +37,7 @@ class TaskAlignedAssigner(nn.Module):
         stride: list = [8, 16, 32],
         eps: float = 1e-9,
         topk2=None,
+        label_smoothing: float = 0.0,
     ):
         """Initialize a TaskAlignedAssigner object with customizable hyperparameters.
 
@@ -48,6 +49,7 @@ class TaskAlignedAssigner(nn.Module):
             stride (list, optional): List of stride values for different feature levels.
             eps (float, optional): A small value to prevent division by zero.
             topk2 (int, optional): Secondary topk value for additional filtering.
+            label_smoothing (float, optional): Label smoothing factor for classification targets (0.0 to 1.0).
         """
         super().__init__()
         self.topk = topk
@@ -58,6 +60,7 @@ class TaskAlignedAssigner(nn.Module):
         self.stride = stride
         self.stride_val = self.stride[1] if len(self.stride) > 1 else self.stride[0]
         self.eps = eps
+        self.label_smoothing = label_smoothing
 
     @torch.no_grad()
     def forward(self, pd_scores, pd_bboxes, anc_points, gt_labels, gt_bboxes, mask_gt):
@@ -283,6 +286,17 @@ class TaskAlignedAssigner(nn.Module):
 
         fg_scores_mask = fg_mask[:, :, None].repeat(1, 1, self.num_classes)  # (b, h*w, 80)
         target_scores = torch.where(fg_scores_mask > 0, target_scores, 0)
+
+        # Apply label smoothing: positive targets become (1 - smooth) + smooth/nc,
+        # negative targets (within foreground) become smooth/nc
+        if self.label_smoothing > 0:
+            smooth = self.label_smoothing
+            target_scores = target_scores.float()
+            target_scores = torch.where(
+                fg_scores_mask > 0,
+                target_scores * (1.0 - smooth) + smooth / self.num_classes,
+                target_scores,
+            )
 
         return target_labels, target_bboxes, target_scores
 
