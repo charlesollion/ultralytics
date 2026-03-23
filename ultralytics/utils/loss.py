@@ -14,6 +14,7 @@ from ultralytics.utils.ops import crop_mask, xywh2xyxy, xyxy2xywh
 from ultralytics.utils.tal import RotatedTaskAlignedAssigner, TaskAlignedAssigner, dist2bbox, dist2rbox, make_anchors
 from ultralytics.utils.torch_utils import autocast
 
+from . import LOGGER
 from .metrics import bbox_iou, probiou
 from .tal import bbox2dist, rbox2dist
 
@@ -355,6 +356,9 @@ class v8DetectionLoss:
 
         self.use_dfl = m.reg_max > 1
 
+        ls = getattr(h, "label_smoothing", 0.0)
+        if ls > 0:
+            LOGGER.info(f"Using label_smoothing={ls} in TaskAlignedAssigner")
         self.assigner = TaskAlignedAssigner(
             topk=tal_topk,
             num_classes=self.nc,
@@ -362,7 +366,7 @@ class v8DetectionLoss:
             beta=6.0,
             stride=self.stride.tolist(),
             topk2=tal_topk2,
-            label_smoothing=getattr(h, "label_smoothing", 0.0),
+            label_smoothing=ls,
         )
         self.bbox_loss = BboxLoss(m.reg_max).to(device)
         self.proj = torch.arange(m.reg_max, dtype=torch.float, device=device)
