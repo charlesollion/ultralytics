@@ -334,13 +334,13 @@ class KeypointLoss(nn.Module):
 class v8DetectionLoss:
     """Criterion class for computing training losses for YOLOv8 object detection."""
 
-    def __init__(self, model, tal_topk: int = 10, tal_topk2: int | None = None, class_weights=None):  # model must be de-paralleled
+    def __init__(self, model, tal_topk: int = 10, tal_topk2: int | None = None, class_weights=None, class_map=None, class_primary=None):  # model must be de-paralleled
         """Initialize v8DetectionLoss with model parameters and task-aligned assignment settings."""
         device = next(model.parameters()).device  # get model device
         h = model.args  # hyperparameters
 
         m = model.model[-1]  # Detect() module
-        
+
         self.hyp = h
         self.stride = m.stride  # model strides
         self.nc = m.nc  # number of classes
@@ -356,6 +356,15 @@ class v8DetectionLoss:
 
         self.use_dfl = m.reg_max > 1
 
+        # Multi-hot class mapping tensors
+        class_map_t = None
+        primary_map_t = None
+        if class_map is not None:
+            class_map_t = torch.tensor(class_map, dtype=torch.float, device=device)
+            LOGGER.info(f"Multi-hot class_map: {class_map_t.shape[0]} old classes -> {class_map_t.shape[1]} labels")
+        if class_primary is not None:
+            primary_map_t = torch.tensor(class_primary, dtype=torch.long, device=device)
+
         ls = getattr(h, "label_smoothing", 0.0)
         if ls > 0:
             LOGGER.info(f"Using label_smoothing={ls} in TaskAlignedAssigner")
@@ -367,6 +376,8 @@ class v8DetectionLoss:
             stride=self.stride.tolist(),
             topk2=tal_topk2,
             label_smoothing=ls,
+            class_map=class_map_t,
+            class_primary=primary_map_t,
         )
         self.bbox_loss = BboxLoss(m.reg_max).to(device)
         self.proj = torch.arange(m.reg_max, dtype=torch.float, device=device)
@@ -482,9 +493,10 @@ class v8DetectionLoss:
 class v8SegmentationLoss(v8DetectionLoss):
     """Criterion class for computing training losses for YOLOv8 segmentation."""
 
-    def __init__(self, model, tal_topk: int = 10, tal_topk2: int | None = None, class_weights = None):  # model must be de-paralleled
+    def __init__(self, model, tal_topk: int = 10, tal_topk2: int | None = None, class_weights=None, class_map=None, class_primary=None):  # model must be de-paralleled
         """Initialize the v8SegmentationLoss class with model parameters and mask overlap setting."""
-        super().__init__(model, tal_topk, tal_topk2, class_weights=class_weights)
+        super().__init__(model, tal_topk, tal_topk2, class_weights=class_weights, class_map=class_map, class_primary=class_primary)
+        self.class_primary = self.assigner.class_primary  # reuse tensor from assigner
         self.overlap = model.args.overlap_mask
         self.bcedice_loss = BCEDiceLoss(weight_bce=0.5, weight_dice=0.5)
 
@@ -523,6 +535,9 @@ class v8SegmentationLoss(v8DetectionLoss):
             )
             if pred_semseg is not None:
                 sem_masks = batch["sem_masks"].to(self.device)  # NxHxW
+                if self.class_primary is not None:
+                    # Remap old class IDs (0-16) to new label indices (0-13) via class_primary
+                    sem_masks = self.class_primary[sem_masks.long()]
                 sem_masks = F.one_hot(sem_masks.long(), num_classes=self.nc).permute(0, 3, 1, 2).float()  # NxCxHxW
 
                 if self.overlap:
@@ -1156,10 +1171,10 @@ class E2EDetectLoss:
 class E2ELoss:
     """Criterion class for computing training losses for end-to-end detection."""
 
-    def __init__(self, model, loss_fn=v8DetectionLoss, class_weights=None):
+    def __init__(self, model, loss_fn=v8DetectionLoss, class_weights=None, class_map=None, class_primary=None):
         """Initialize E2ELoss with one-to-many and one-to-one detection losses using the provided model."""
-        self.one2many = loss_fn(model, tal_topk=10, class_weights=class_weights)
-        self.one2one = loss_fn(model, tal_topk=7, tal_topk2=1, class_weights=class_weights)
+        self.one2many = loss_fn(model, tal_topk=10, class_weights=class_weights, class_map=class_map, class_primary=class_primary)
+        self.one2one = loss_fn(model, tal_topk=7, tal_topk2=1, class_weights=class_weights, class_map=class_map, class_primary=class_primary)
         self.updates = 0
         self.total = 1.0
         # init gain

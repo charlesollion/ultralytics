@@ -389,8 +389,13 @@ class DetectionModel(BaseModel):
         # Define model
         self.yaml["channels"] = ch  # save channels
         if nc and nc != self.yaml["nc"]:
-            LOGGER.info(f"Overriding model.yaml nc={self.yaml['nc']} with nc={nc}")
-            self.yaml["nc"] = nc  # override YAML value
+            if self.yaml.get("class_map") is not None:
+                LOGGER.info(
+                    f"Keeping model.yaml nc={self.yaml['nc']} (class_map present, data nc={nc})"
+                )
+            else:
+                LOGGER.info(f"Overriding model.yaml nc={self.yaml['nc']} with nc={nc}")
+                self.yaml["nc"] = nc  # override YAML value
         self.model, self.save = parse_model(deepcopy(self.yaml), ch=ch, verbose=verbose)  # model, savelist
         self.names = {i: f"{i}" for i in range(self.yaml["nc"])}  # default names dict
         self.inplace = self.yaml.get("inplace", True)
@@ -577,11 +582,15 @@ class SegmentationModel(DetectionModel):
     def init_criterion(self):
         """Initialize the loss criterion for the SegmentationModel."""
         class_weights = self.yaml.get("class_weights")
+        class_map = self.yaml.get("class_map")
+        class_primary = self.yaml.get("class_primary")
         if class_weights:
-            LOGGER.warning("class weights found") 
+            LOGGER.warning("class weights found")
         else:
-            LOGGER.warning("no class weights found") 
-        return E2ELoss(self, v8SegmentationLoss, class_weights=class_weights) if getattr(self, "end2end", False) else v8SegmentationLoss(self, class_weights=class_weights)
+            LOGGER.warning("no class weights found")
+        if class_map:
+            LOGGER.info(f"Multi-hot class_map found: {len(class_map)} old classes -> {len(class_map[0])} labels")
+        return E2ELoss(self, v8SegmentationLoss, class_weights=class_weights, class_map=class_map, class_primary=class_primary) if getattr(self, "end2end", False) else v8SegmentationLoss(self, class_weights=class_weights, class_map=class_map, class_primary=class_primary)
 
 
 class PoseModel(DetectionModel):

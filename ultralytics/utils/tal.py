@@ -38,6 +38,8 @@ class TaskAlignedAssigner(nn.Module):
         eps: float = 1e-9,
         topk2=None,
         label_smoothing: float = 0.0,
+        class_map=None,
+        class_primary=None,
     ):
         """Initialize a TaskAlignedAssigner object with customizable hyperparameters.
 
@@ -50,6 +52,8 @@ class TaskAlignedAssigner(nn.Module):
             eps (float, optional): A small value to prevent division by zero.
             topk2 (int, optional): Secondary topk value for additional filtering.
             label_smoothing (float, optional): Label smoothing factor for classification targets (0.0 to 1.0).
+            class_map (torch.Tensor, optional): Multi-hot mapping matrix (n_old_classes, n_new_labels).
+            class_primary (torch.Tensor, optional): Primary label index per old class (n_old_classes,).
         """
         super().__init__()
         self.topk = topk
@@ -61,6 +65,8 @@ class TaskAlignedAssigner(nn.Module):
         self.stride_val = self.stride[1] if len(self.stride) > 1 else self.stride[0]
         self.eps = eps
         self.label_smoothing = label_smoothing
+        self.class_map = class_map  # (n_old_classes, num_classes) or None
+        self.class_primary = class_primary  # (n_old_classes,) or None
 
     @torch.no_grad()
     def forward(self, pd_scores, pd_bboxes, anc_points, gt_labels, gt_bboxes, mask_gt):
@@ -193,7 +199,11 @@ class TaskAlignedAssigner(nn.Module):
 
         ind = torch.zeros([2, self.bs, self.n_max_boxes], dtype=torch.long)  # 2, b, max_num_obj
         ind[0] = torch.arange(end=self.bs).view(-1, 1).expand(-1, self.n_max_boxes)  # b, max_num_obj
-        ind[1] = gt_labels.squeeze(-1)  # b, max_num_obj
+        # Remap old class IDs to primary new label for alignment scoring
+        gt_cls = gt_labels.long().squeeze(-1)  # b, max_num_obj
+        if self.class_primary is not None:
+            gt_cls = self.class_primary[gt_cls.clamp(0)]
+        ind[1] = gt_cls  # b, max_num_obj
         # Get the scores of each grid for each gt cls
         bbox_scores[mask_gt] = pd_scores[ind[0], :, ind[1]][mask_gt]  # b, max_num_obj, h*w
 
@@ -276,13 +286,20 @@ class TaskAlignedAssigner(nn.Module):
         # Assigned target scores
         target_labels.clamp_(0)
 
-        # 10x faster than F.one_hot()
-        target_scores = torch.zeros(
-            (target_labels.shape[0], target_labels.shape[1], self.num_classes),
-            dtype=torch.int64,
-            device=target_labels.device,
-        )  # (b, h*w, 80)
-        target_scores.scatter_(2, target_labels.unsqueeze(-1), 1)
+        if self.class_map is not None:
+            # Multi-hot: look up target vectors from class_map
+            target_scores = self.class_map[target_labels]  # (b, h*w, num_classes)
+            # Remap target_labels to primary new label for downstream use
+            if self.class_primary is not None:
+                target_labels = self.class_primary[target_labels]
+        else:
+            # Standard one-hot (10x faster than F.one_hot())
+            target_scores = torch.zeros(
+                (target_labels.shape[0], target_labels.shape[1], self.num_classes),
+                dtype=torch.int64,
+                device=target_labels.device,
+            )  # (b, h*w, 80)
+            target_scores.scatter_(2, target_labels.unsqueeze(-1), 1)
 
         fg_scores_mask = fg_mask[:, :, None].repeat(1, 1, self.num_classes)  # (b, h*w, 80)
         target_scores = torch.where(fg_scores_mask > 0, target_scores, 0)
