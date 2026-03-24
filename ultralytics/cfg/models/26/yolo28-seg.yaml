@@ -40,7 +40,7 @@ reg_max: 1
 #  16: verre                     -> [verre]
 
 class_map:
-  #                alim plast pap  cart bois met  ver  bout can  enc  meg  paq  sac  tex
+  #alim plast pap  cart bois met  ver  bout can  enc  meg  paq  sac  tex
   - [1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  #  0: alimentaire-papier
   - [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  #  1: alimentaire-plastique
   - [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]  #  2: autre-bois
@@ -62,6 +62,20 @@ class_map:
 # Primary class for each old class (used for alignment scoring and sem_masks)
 # Index of the "most specific" label for each old class
 class_primary: [0, 0, 4, 3, 5, 2, 1, 1, 7, 7, 8, 9, 10, 11, 12, 13, 6]
+
+# Group-argmax decode config for 14D → 17-class assignment
+decode_groups:
+  material: [1, 2, 3, 4, 5, 6, 13]  # plastique, papier, carton, bois, metal, verre, textile
+  object: [0, 7, 8, 9, 10, 11, 12]  # alimentaire, bouteille, canette, encombrant, megot, paquet_cigarette, sac
+
+decode_rules:
+  # Objects that always map to their default class regardless of material
+  object_priority: [8, 11]  # canette, paquet_cigarette
+  # Objects discarded when paired with an invalid material
+  discard_on_invalid: [12]  # sac (only valid with plastique)
+  # Materials that override object when combo is invalid (and obj not priority/standalone)
+  material_priority:
+    5: [8, 9]  # metal: only allow canette(8) and encombrant(9) as objects
 
 names:
   0: alimentaire
