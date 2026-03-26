@@ -9,16 +9,10 @@ def decode_multihot_groups(scores, class_map, decode_groups, decode_rules=None,
                            obj_threshold=0.3, label_thresholds=None):
     """Decode multi-hot sigmoid scores to single class IDs using group argmax with rules.
 
-    The algorithm:
-      1. argmax within material group → best material
-      2. argmax within object group → best object (if above obj_threshold)
-      3. If no object present → material-only class (autre-*)
-      4. If (material, object) is a valid combo in class_map → use it
-      5. If object is standalone (no valid materials) → object-only class
-      6. If object is in object_priority → map to its default class
-      7. If material is in material_priority and object not allowed → material-only class
-      8. If object is in discard_on_invalid → discard (-1)
-      9. Fallback: pick best valid material for this object from scores
+    Strategies:
+      - No label_thresholds (Strategy A): raw argmax, flat obj_threshold for presence.
+      - With label_thresholds (Strategy C): raw argmax, per-label threshold for both
+        material and object presence. No material + non-standalone object → discard.
 
     Args:
         scores: (N, n_labels) sigmoid scores
@@ -32,8 +26,7 @@ def decode_multihot_groups(scores, class_map, decode_groups, decode_rules=None,
         obj_threshold: minimum max-score for object group to be considered present
             (used only when label_thresholds is None)
         label_thresholds: (n_labels,) tensor of per-label thresholds. When provided,
-            argmax operates on (score - threshold) within each group, and an object is
-            considered present if any object label exceeds its threshold.
+            presence is checked per-label: material/object must exceed its own threshold.
 
     Returns:
         class_ids: (N,) tensor of class IDs (0 to n_classes-1), -1 for discarded detections
@@ -57,27 +50,28 @@ def decode_multihot_groups(scores, class_map, decode_groups, decode_rules=None,
     mat_scores = scores[:, mat_idx_t]  # (N, n_mat)
     obj_scores = scores[:, obj_idx_t]  # (N, n_obj)
 
+    # Raw argmax for both groups (all strategies)
+    mat_best_pos = mat_scores.argmax(dim=-1)  # (N,)
+    mat_best_label = mat_idx_t[mat_best_pos]  # (N,) actual label index
+    obj_best_pos = obj_scores.argmax(dim=-1)  # (N,)
+    obj_best_label = obj_idx_t[obj_best_pos]  # (N,) actual label index
+
     if label_thresholds is not None:
-        # Threshold-aware: argmax on (score - threshold), presence = any score > threshold
+        # Strategy C: per-label presence for both groups
         lt = label_thresholds.to(device)
         mat_thresh = lt[mat_idx_t]  # (n_mat,)
         obj_thresh = lt[obj_idx_t]  # (n_obj,)
-        mat_normed = mat_scores - mat_thresh  # (N, n_mat)
-        obj_normed = obj_scores - obj_thresh  # (N, n_obj)
 
-        mat_best_pos = mat_normed.argmax(dim=-1)
-        mat_best_label = mat_idx_t[mat_best_pos]
+        mat_winner_score = mat_scores.gather(1, mat_best_pos.unsqueeze(1)).squeeze(1)
+        mat_winner_thresh = mat_thresh[mat_best_pos]
+        mat_present = mat_winner_score >= mat_winner_thresh  # (N,)
 
-        obj_best_pos = obj_normed.argmax(dim=-1)
-        obj_best_label = obj_idx_t[obj_best_pos]
-        # Object is present if any object label exceeds its threshold
-        obj_present = (obj_scores > obj_thresh).any(dim=-1)
+        obj_winner_score = obj_scores.gather(1, obj_best_pos.unsqueeze(1)).squeeze(1)
+        obj_winner_thresh = obj_thresh[obj_best_pos]
+        obj_present = obj_winner_score >= obj_winner_thresh  # (N,)
     else:
-        mat_best_pos = mat_scores.argmax(dim=-1)  # (N,)
-        mat_best_label = mat_idx_t[mat_best_pos]  # (N,) actual label index
-
-        obj_best_pos = obj_scores.argmax(dim=-1)  # (N,)
-        obj_best_label = obj_idx_t[obj_best_pos]  # (N,) actual label index
+        # Strategy A: material always present, flat obj threshold
+        mat_present = torch.ones(n_det, dtype=torch.bool, device=device)
         obj_max_score = obj_scores.max(dim=-1).values  # (N,)
         obj_present = obj_max_score > obj_threshold
 
@@ -123,23 +117,38 @@ def decode_multihot_groups(scores, class_map, decode_groups, decode_rules=None,
     for i in range(n_det):
         ml = mat_best_label[i].item()
         ol = obj_best_label[i].item()
+        has_mat = mat_present[i].item()
+        has_obj = obj_present[i].item()
 
-        # Step 1: No object detected → material-only class
-        if not obj_present[i]:
-            result[i] = mat_only_class.get(ml, -1)
+        # Nothing above threshold → discard
+        if not has_mat and not has_obj:
             continue
 
-        # Step 2: Valid combo → use it
-        if (ml, ol) in combo_to_class:
-            result[i] = combo_to_class[(ml, ol)]
+        # No object → material-only class (if material present)
+        if not has_obj:
+            result[i] = mat_only_class.get(ml, -1) if has_mat else -1
             continue
 
-        # Step 3: Standalone object (no valid materials in class_map)
+        # Standalone object (encombrant, megot) → doesn't need material
         if ol in standalone_objs:
             result[i] = obj_only_class.get(ol, -1)
             continue
 
-        # Step 4: Priority object → map to default class (combo with first valid mat)
+        # Object present but no material → discard (can't form a valid class)
+        if not has_mat:
+            # Priority objects can still map to their default
+            if ol in obj_priority:
+                vm = valid_mats_for_obj.get(ol, [])
+                result[i] = combo_to_class.get((vm[0], ol), -1) if vm else obj_only_class.get(ol, -1)
+            # Otherwise discard
+            continue
+
+        # Both present — try combo
+        if (ml, ol) in combo_to_class:
+            result[i] = combo_to_class[(ml, ol)]
+            continue
+
+        # Priority object → map to default class regardless of material
         if ol in obj_priority:
             vm = valid_mats_for_obj.get(ol, [])
             if vm:
@@ -148,17 +157,17 @@ def decode_multihot_groups(scores, class_map, decode_groups, decode_rules=None,
                 result[i] = obj_only_class.get(ol, -1)
             continue
 
-        # Step 5: Material priority override
+        # Material priority override
         if ml in mat_priority and ol not in mat_priority[ml]:
             result[i] = mat_only_class.get(ml, -1)
             continue
 
-        # Step 6: Discard on invalid material
+        # Discard on invalid material
         if ol in discard_on_invalid:
             result[i] = -1
             continue
 
-        # Step 7: Fallback — pick best valid material for this object
+        # Fallback — pick best valid material for this object
         vm = valid_mats_for_obj.get(ol, [])
         if vm:
             vm_scores = scores[i, vm]
