@@ -412,7 +412,9 @@ def check_det_dataset(dataset: str, autodownload: bool = True) -> dict[str, Any]
     Returns:
         (dict[str, Any]): Parsed dataset information and paths.
     """
-    file = check_file(dataset)
+    file = Path(check_file(dataset))
+    if file.is_dir():
+        file = find_dataset_yaml(file)
 
     # Download (optional)
     extract_dir = ""
@@ -806,8 +808,12 @@ def save_dataset_cache_file(prefix: str, path: Path, x: dict, version: str):
     if is_dir_writeable(path.parent):
         if path.exists():
             path.unlink()  # remove *.cache file if exists
-        with open(str(path), "wb") as file:  # context manager here fixes windows async np.save bug
-            np.save(file, x)
-        LOGGER.info(f"{prefix}New cache created: {path}")
+        try:
+            with open(str(path), "wb") as file:  # context manager here fixes windows async np.save bug
+                np.save(file, x)
+            LOGGER.info(f"{prefix}New cache created: {path}")
+        except Exception as e:
+            Path(path).unlink(missing_ok=True)  # remove partially written file
+            LOGGER.warning(f"{prefix}WARNING ⚠️ Failed to save cache to {path}: {e}")
     else:
         LOGGER.warning(f"{prefix}Cache directory {path.parent} is not writable, cache not saved.")
