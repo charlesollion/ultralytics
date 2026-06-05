@@ -91,7 +91,9 @@ def decode_multihot_groups(scores, class_map, decode_groups, decode_rules=None,
 
         if len(active_objs) == 1 and len(active_mats) >= 1:
             for m in active_mats:
-                combo_to_class[(m, active_objs[0])] = cls_id
+                # First one wins if duplicate combo (e.g. autre+plastique = class 6 and 7)
+                if (m, active_objs[0]) not in combo_to_class:
+                    combo_to_class[(m, active_objs[0])] = cls_id
             valid_mats_for_obj.setdefault(active_objs[0], []).extend(active_mats)
         elif len(active_objs) == 1 and len(active_mats) == 0:
             obj_only_class[active_objs[0]] = cls_id
