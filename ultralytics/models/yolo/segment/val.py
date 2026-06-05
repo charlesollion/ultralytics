@@ -124,11 +124,6 @@ class SegmentationValidator(DetectionValidator):
             self.ml_det_conf = []  # (n_det,) detection confidence from head
             # Store original 17-class names for the group-decode confusion matrix
             self._orig_names = dict(self.names)  # copy before any override
-            # 14D per-label accumulators for training-time AP computation
-            self._iou_thresholds = torch.linspace(0.5, 0.95, 10)  # same as standard YOLO
-            self.ml14_sigmoid = []   # list of (n_det, 14) sigmoid scores per image
-            self.ml14_tp = []        # list of (n_det, 14, 10) bool: TP per label per IoU threshold
-            self.ml14_n_gt = torch.zeros(self.class_map_t.shape[1], dtype=torch.long)  # total GT count per label
             LOGGER.info(
                 f"Validator: multi-hot decode {self.class_map_t.shape[1]}D -> {nc_orig} classes"
             )
@@ -162,10 +157,13 @@ class SegmentationValidator(DetectionValidator):
             (list[dict[str, torch.Tensor]]): Processed detection predictions with masks.
         """
         proto = preds[0][1] if isinstance(preds[0], tuple) else preds[1]
-        # Decode multi-hot 14D scores to 17-class scores for metrics in original class space
+        # Decode multi-hot scores to 17-class space for metrics (standalone val only).
         if getattr(self, "class_map_t", None) is not None and isinstance(preds[1], dict) and "one2one" in preds[1]:
             if self.training:
-                preds = self._postprocess_multihot_fast(preds)
+                # Loss-only training val: predictions are not consumed (see update_metrics),
+                # so skip decoding entirely and return well-formed empties.
+                preds = [self._empty_result(proto.device, self.class_map_t.shape[1], 32)
+                         for _ in range(proto.shape[0])]
             else:
                 preds = self._postprocess_multihot(preds)
         else:
@@ -299,71 +297,6 @@ class SegmentationValidator(DetectionValidator):
             })
         return results
 
-    def _postprocess_multihot_fast(self, preds):
-        """Lightweight 14D postprocess for training-time validation.
-
-        Class-agnostic NMS on max(sigmoid) confidence. No group-argmax decode.
-        Returns dummy cls=0 (not used), real 14D scores for per-label eval.
-        """
-        from torchvision.ops import nms
-
-        raw_one2one = preds[1]["one2one"]
-        scores_raw = raw_one2one["scores"]  # (bs, 14, anchors) pre-sigmoid
-
-        head = getattr(self, '_head', None)
-        if head is None or not hasattr(head, '_get_decode_boxes'):
-            raise RuntimeError("Cannot decode boxes: head._get_decode_boxes not available")
-
-        dbox = head._get_decode_boxes(raw_one2one)  # (bs, 4, anchors)
-        mc_all = raw_one2one.get("mask_coefficient")  # (bs, nm, anchors) or None
-
-        bs = scores_raw.shape[0]
-        max_pre = 300
-        nms_iou = 0.5
-        max_det = self.args.max_det
-
-        results = []
-        for xi in range(bs):
-            boxes_i = dbox[xi].T  # (anchors, 4)
-            scores_14 = scores_raw[xi].T.sigmoid()  # (anchors, 14)
-            mc_i = mc_all[xi].T if mc_all is not None else None
-            n_anchors = boxes_i.shape[0]
-
-            # Pre-filter top-K by max sigmoid
-            max_scores = scores_14.max(dim=1).values
-            k = min(max_pre, n_anchors)
-            topk_idx = max_scores.topk(k).indices
-            boxes_k = boxes_i[topk_idx]
-            scores_k = scores_14[topk_idx]
-            max_k = max_scores[topk_idx]
-            mc_k = mc_i[topk_idx] if mc_i is not None else None
-
-            # Filter by conf threshold
-            keep = max_k >= (self.args.conf or 0.001)
-            boxes_k, scores_k, max_k = boxes_k[keep], scores_k[keep], max_k[keep]
-            if mc_k is not None:
-                mc_k = mc_k[keep]
-
-            if boxes_k.shape[0] == 0:
-                device = boxes_i.device
-                nl = scores_14.shape[1]
-                nm = mc_i.shape[1] if mc_i is not None else 32
-                results.append(self._empty_result(device, nl, nm))
-                continue
-
-            # Class-agnostic NMS
-            nms_keep = nms(boxes_k, max_k, nms_iou)[:max_det]
-
-            n_out = nms_keep.shape[0]
-            results.append({
-                "bboxes": boxes_k[nms_keep],
-                "conf": max_k[nms_keep],
-                "cls": torch.zeros(n_out, device=boxes_i.device),  # dummy — 14D eval doesn't use cls
-                "extra": mc_k[nms_keep] if mc_k is not None else torch.zeros(n_out, 32, device=boxes_i.device),
-                "scores_multilabel": scores_k[nms_keep],
-            })
-        return results
-
     @staticmethod
     def _empty_result(device, n_labels, n_mask_coeffs):
         """Return an empty result dict for images with no detections."""
@@ -439,10 +372,8 @@ class SegmentationValidator(DetectionValidator):
         """Update metrics, including multi-label stats when class_map is active."""
         if getattr(self, "class_map_t", None) is not None:
             if self.training:
-                # Training: only 14D per-label evaluation, skip standard YOLO metrics
-                for si, pred in enumerate(preds):
-                    self.seen += 1
-                    self._accumulate_14d_stats(si, pred, batch)
+                # Loss-only monitoring during training: skip the per-label AP sweep.
+                self.seen += len(preds)
                 return
             else:
                 # Standalone val: full multi-label stats
@@ -524,61 +455,6 @@ class SegmentationValidator(DetectionValidator):
             self.ml_gt_unmatched.append(gt_multihot[unmatched_gt_idx].cpu())
             self.ml_gt_cls_unmatched.append(gt_cls_old[unmatched_gt_idx].cpu())
 
-    def _accumulate_14d_stats(self, si, pred, batch):
-        """Accumulate 14D per-label stats for AP computation (analogous to standard YOLO).
-
-        Class-agnostic box IoU matching at 0.5. For each prediction, record sigmoid scores
-        and per-label TP status. Count total GT positives per label.
-        """
-        from ultralytics.utils.metrics import box_iou
-
-        scores_ml = pred.get("scores_multilabel")  # (n_det, 14) sigmoid
-        if scores_ml is None:
-            return
-
-        n_labels = self.class_map_t.shape[1]
-        idx = batch["batch_idx"] == si
-        gt_cls_old = batch["cls"][idx].squeeze(-1).long()
-        gt_bboxes = batch["bboxes"][idx]
-        n_gt = gt_cls_old.shape[0]
-        n_det = scores_ml.shape[0]
-
-        # GT multi-hot labels and count per label
-        gt_multihot = self.class_map_t[gt_cls_old].cpu() if n_gt > 0 else torch.zeros(0, n_labels)
-        self.ml14_n_gt += gt_multihot.long().sum(dim=0)
-
-        if n_det == 0:
-            return
-
-        n_iou = len(self._iou_thresholds)
-        # Per-detection TP matrix: (n_det, 14, 10) — TP per label per IoU threshold
-        tp = torch.zeros(n_det, n_labels, n_iou, dtype=torch.bool)
-
-        if n_gt > 0:
-            # Class-agnostic box IoU matching at multiple thresholds
-            imgsz = batch["img"].shape[2:]
-            gt_bboxes_xyxy = ops.xywh2xyxy(gt_bboxes) * torch.tensor(imgsz, device=gt_bboxes.device)[[1, 0, 1, 0]]
-            iou = box_iou(gt_bboxes_xyxy, pred["bboxes"])  # (n_gt, n_det)
-            iou_np = iou.cpu().numpy()
-
-            # Match at each IoU threshold independently (same greedy strategy as YOLO)
-            for t_idx, iou_thresh in enumerate(self._iou_thresholds):
-                matches = np.nonzero(iou_np >= iou_thresh.item())
-                matches = np.array(matches).T
-                matched_gt = set()
-                matched_det = set()
-                if matches.shape[0]:
-                    order = iou_np[matches[:, 0], matches[:, 1]].argsort()[::-1]
-                    matches = matches[order]
-                    for gi, di in matches:
-                        if gi not in matched_gt and di not in matched_det:
-                            matched_gt.add(gi)
-                            matched_det.add(di)
-                            tp[di, :, t_idx] = gt_multihot[gi].bool()
-
-        self.ml14_sigmoid.append(scores_ml.cpu())
-        self.ml14_tp.append(tp)
-
     def finalize_metrics(self) -> None:
         """Finalize metrics, adding multi-label per-label report when class_map is active."""
         if getattr(self, "class_map_t", None) is not None and self.training:
@@ -588,112 +464,29 @@ class SegmentationValidator(DetectionValidator):
         if getattr(self, "class_map_t", None) is not None and not self.training and self.ml_pred_scores:
             self._print_multilabel_metrics()
 
-    def _finalize_14d_metrics(self):
-        """Compute per-label AP50 and mAP50-95 (analogous to standard YOLO) and log results."""
-        if not self.ml14_sigmoid:
-            self._ml14_stats = {"precision": 0.0, "recall": 0.0, "mAP50": 0.0, "mAP50-95": 0.0}
-            self._ml14_macro_f1 = 0.0
-            return
-
-        all_sigmoid = torch.cat(self.ml14_sigmoid, dim=0)  # (N, 14)
-        all_tp = torch.cat(self.ml14_tp, dim=0)  # (N, 14, 10) bool
-        n_gt = self.ml14_n_gt  # (14,)
-        n_labels = all_sigmoid.shape[1]
-        n_iou = all_tp.shape[2]
-
-        ap_per_iou = torch.zeros(n_labels, n_iou)  # AP at each IoU threshold
-        best_p = torch.zeros(n_labels)   # best P/R/F1 at IoU=0.5
-        best_r = torch.zeros(n_labels)
-        best_f1 = torch.zeros(n_labels)
-
-        for l in range(n_labels):
-            n_pos = n_gt[l].item()
-            if n_pos == 0:
-                continue
-
-            # Sort predictions by sigmoid[l] descending (same order for all IoU thresholds)
-            order = all_sigmoid[:, l].argsort(descending=True)
-
-            for t_idx in range(n_iou):
-                tp_sorted = all_tp[order, l, t_idx].float()  # (N,)
-
-                cum_tp = tp_sorted.cumsum(0)
-                cum_fp = torch.arange(1, len(tp_sorted) + 1, dtype=torch.float) - cum_tp
-                precision = cum_tp / (cum_tp + cum_fp + 1e-8)
-                recall = cum_tp / n_pos
-
-                # AP: COCO-style all-point interpolation
-                mrec = torch.cat([torch.zeros(1), recall])
-                mpre = torch.cat([torch.ones(1), precision])
-                for i in range(len(mpre) - 2, -1, -1):
-                    mpre[i] = max(mpre[i], mpre[i + 1])
-                change = torch.where(mrec[1:] != mrec[:-1])[0]
-                ap_per_iou[l, t_idx] = ((mrec[change + 1] - mrec[change]) * mpre[change + 1]).sum()
-
-                # Best F1 at IoU=0.5 (first threshold)
-                if t_idx == 0:
-                    f1_curve = 2 * precision * recall / (precision + recall + 1e-8)
-                    best_idx = f1_curve.argmax()
-                    best_p[l] = precision[best_idx]
-                    best_r[l] = recall[best_idx]
-                    best_f1[l] = f1_curve[best_idx]
-
-        ap50 = ap_per_iou[:, 0]  # AP at IoU=0.5
-        ap50_95 = ap_per_iou.mean(dim=1)  # AP averaged over 10 IoU thresholds
-        map50 = ap50.mean().item()
-        map50_95 = ap50_95.mean().item()
-
-        # Log
-        label_names = self.ml_label_names
-        LOGGER.info("\n--- 14D Per-Label Metrics (training val) ---")
-        LOGGER.info(f"{'Label':<20s} {'AP50':>6s} {'AP50-95':>8s} {'P':>6s} {'R':>6s} {'F1':>6s} {'nGT':>7s}")
-        for l in range(n_labels):
-            name = label_names.get(l, f"label_{l}")
-            LOGGER.info(
-                f"{name:<20s} {ap50[l]:.3f} {ap50_95[l]:>8.3f} {best_p[l]:.3f} {best_r[l]:.3f} "
-                f"{best_f1[l]:.3f} {int(n_gt[l]):>7d}"
-            )
-        LOGGER.info(
-            f"{'MACRO':<20s} {map50:.3f} {map50_95:>8.3f} {best_p.mean():.3f} {best_r.mean():.3f} "
-            f"{best_f1.mean():.3f}"
-        )
-
-        # Store stats for get_stats() and fitness
-        self._ml14_stats = {
-            "precision": best_p.mean().item(),
-            "recall": best_r.mean().item(),
-            "mAP50": map50,
-            "mAP50-95": map50_95,
-        }
-        # Fitness = mAP50-95 (same as standard YOLO)
-        self._ml14_macro_f1 = map50_95
-
     def get_stats(self):
         """Override to return 14D stats during multihot training, standard stats otherwise."""
         if getattr(self, "class_map_t", None) is not None and self.training:
-            # Compute 14D metrics now (get_stats is called before finalize_metrics)
-            self._finalize_14d_metrics()
-            ml14 = getattr(self, "_ml14_stats", {})
+            # Loss-only monitoring: skip the per-label AP sweep. fitness = -val loss
+            # so best.pt tracks the lowest total validation loss.
+            val_loss = float(self.loss.sum().item()) if getattr(self, "loss", None) is not None else 0.0
             return {
-                "metrics/precision(B)": ml14.get("precision", 0.0),
-                "metrics/recall(B)": ml14.get("recall", 0.0),
-                "metrics/mAP50(B)": ml14.get("mAP50", 0.0),
-                "metrics/mAP50-95(B)": ml14.get("mAP50-95", 0.0),
+                "metrics/precision(B)": 0.0,
+                "metrics/recall(B)": 0.0,
+                "metrics/mAP50(B)": 0.0,
+                "metrics/mAP50-95(B)": 0.0,
                 "metrics/precision(M)": 0.0,
                 "metrics/recall(M)": 0.0,
                 "metrics/mAP50(M)": 0.0,
                 "metrics/mAP50-95(M)": 0.0,
-                "fitness": ml14.get("mAP50-95", 0.0),
+                "fitness": -val_loss,
             }
-        stats = super().get_stats()
-        if getattr(self, "_ml14_macro_f1", None) is not None:
-            stats["fitness"] = self._ml14_macro_f1
-        return stats
+        return super().get_stats()
 
     def print_results(self):
-        """Print results — skip standard YOLO table during multihot training."""
+        """Print results — skip the standard YOLO table during multihot training (loss-only)."""
         if getattr(self, "class_map_t", None) is not None and self.training:
-            return  # 14D table already printed in _finalize_14d_metrics
+            return
         super().print_results()
 
     def _print_multilabel_metrics(self):
